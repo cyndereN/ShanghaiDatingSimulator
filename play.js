@@ -10469,6 +10469,228 @@ const storySay=(r,text)=>{for(const line of text.split('\n').filter(t=>t.trim())
 const lines=(r,list)=>{for(const t of list||[])say(r,t);};
 const weighted=(pairs,value)=>{const sum=pairs.reduce((n,[,w])=>n+w,0);let n=value*sum;return pairs.find(([,w])=>(n-=w)<0)?.[0]??pairs.at(-1)?.[0];};
 function randomValue(n){n.rngState=(Math.imul(n.rngState,1664525)+1013904223)>>>0;return n.rngState/4294967296;}
+
+// Match chat uses the same selection idea as a life-restart sim:
+// opening stats and one talent, then each turn keeps only events whose
+// include/exclude pass, and draws one by weight. Seen events and stat
+// changes are what let the next event into the pool. NoRandom events
+// stay out of the draw and only arrive through a branch.
+const LIFE_NAMES={CHR:'脸',INT:'嘴',STR:'劲',MNY:'钱',SPR:'心'};
+function lifeClamp(n){return Math.max(0,Math.min(10,n));}
+function lifeParse(condition){
+ const conditions=[];
+ const stack=[conditions];
+ let cursor=0;
+ const push=i=>{
+  const str=condition.slice(cursor,i).trim();
+  cursor=i;
+  if(str)stack[0].push(str);
+ };
+ for(let i=0;i<condition.length;i++){
+  const ch=condition[i];
+  if(ch===' ')continue;
+  if(ch==='('){push(i);cursor++;const sub=[];stack[0].push(sub);stack.unshift(sub);continue;}
+  if(ch===')'){push(i);cursor++;stack.shift();continue;}
+  if(ch==='|'||ch==='&'){push(i);push(i+1);}
+ }
+ push(condition.length);
+ return conditions;
+}
+function lifeAtom(life,condition){
+ const i=condition.search(/[><!?=]/);
+ if(i<0)return false;
+ const prop=condition.slice(0,i);
+ const wide=condition[i+1]==='=';
+ const symbol=condition.slice(i,i+(wide?2:1));
+ const rest=condition.slice(i+symbol.length);
+ const value=rest[0]==='['?rest.slice(1,-1).split(',').map(s=>s.trim()).filter(Boolean):prop==='CHC'?rest:Number(rest);
+ const data=prop==='TLT'?life.talents:prop==='EVT'?life.seen:life[prop];
+ const has=(list,item)=>Array.isArray(list)&&list.includes(item);
+ if(symbol==='>')return (data??0)>value;
+ if(symbol==='<')return (data??0)<value;
+ if(symbol==='>=')return (data??0)>=value;
+ if(symbol==='<=')return (data??0)<=value;
+ if(symbol==='=')return Array.isArray(data)?has(data,value):(data??0)==value;
+ if(symbol==='!=')return Array.isArray(data)?!has(data,value):(data??0)!=value;
+ if(symbol==='?')return Array.isArray(value)&&value.some(item=>has(data,item));
+ if(symbol==='!')return Array.isArray(value)&&value.every(item=>!has(data,item));
+ return false;
+}
+function lifeEval(life,node){
+ if(!Array.isArray(node))return lifeAtom(life,node);
+ if(!node.length)return true;
+ if(node.length===1)return lifeEval(life,node[0]);
+ let ok=lifeEval(life,node[0]);
+ for(let i=1;i<node.length;i+=2){
+  const op=node[i],next=node[i+1];
+  if(next===undefined)return false;
+  if(op==='&'){if(ok)ok=lifeEval(life,next);}
+  else if(op==='|'){if(ok)return true;ok=lifeEval(life,next);}
+  else return false;
+ }
+ return ok;
+}
+function lifeCond(life,expr){return !expr||lifeEval(life,lifeParse(expr));}
+function lifeStatLine(life){
+ return ['CHR','INT','STR','MNY','SPR'].map(k=>`${LIFE_NAMES[k]} ${life[k]}`).join(' · ');
+}
+function lifeDelta(before,after){
+ return ['CHR','INT','STR','MNY','SPR'].flatMap(k=>{
+  const d=after[k]-before[k];
+  return d?`${LIFE_NAMES[k]} ${d>0?'+':''}${d}`:[];
+ }).join('，');
+}
+let lifeCatalog;
+function lifeEvents(){
+ if(lifeCatalog)return lifeCatalog;
+ const list=[];
+ const solidBefore=(chapters,index)=>{for(let j=index-1;j>=0;j--)if(!chapters[j].offline)return j;return 0;};
+ for(const arc of ordinaryArcs){
+  arc.chapters.forEach((chapter,index)=>{
+   const id=`${arc.id}#${index}`;
+   let include=index===0?`TLT?[${arc.id}]`:`EVT?[${arc.id}#${index-1}]`;
+   if(index>0&&arc.chapters[index-1].offline){
+    const solid=solidBefore(arc.chapters,index);
+    include=`(EVT?[${arc.id}#${index-1}])|((EVT?[${arc.id}#${solid}])&(STR<2))`;
+   }
+   list.push({
+    id,talent:arc.id,index,chapter,weight:chapter.choices.some(c=>c.end)?2:5,
+    include,exclude:chapter.offline?`(EVT?[${id}])|(STR<2)`:`EVT?[${id}]`
+   });
+  });
+  list.push({id:`${arc.id}#echo`,talent:arc.id,index:-1,weight:4,echo:true,include:`EVT?[${arc.id}#0]`,exclude:`EVT?[${arc.id}#echo]`});
+  list.push({id:`${arc.id}#cold`,talent:arc.id,index:-1,weight:0,noRandom:true,cold:true,include:'SPR<0',exclude:`EVT?[${arc.id}#cold]`});
+ }
+ rushBeats.forEach((beat,index)=>{
+  const id=`featured#${index}`;
+  const include=index===0?'TLT?[featured]':index===1?'(EVT?[featured#0])|(EVT?[featured#durian0])':`EVT?[featured#${index-1}]`;
+  const exclude=index===0?`(EVT?[${id}])|(TLT?[CHAR_003])`:`EVT?[${id}]`;
+  list.push({id,talent:'featured',index,beat,weight:index===rushBeats.length-1?2:5,include,exclude});
+ });
+ list.push({
+  id:'featured#durian0',talent:'CHAR_003',index:0,weight:8,durian:true,
+  include:'TLT?[CHAR_003]',exclude:'EVT?[featured#durian0]',choices:rushBeats[0].choices
+ });
+ list.push({id:'featured#echo',talent:'featured',index:-1,weight:4,echo:true,include:'(EVT?[featured#0])|(EVT?[featured#durian0])',exclude:'EVT?[featured#echo]'});
+ list.push({id:'featured#cold',talent:'featured',index:-1,weight:0,noRandom:true,cold:true,include:'SPR<0',exclude:'EVT?[featured#cold]'});
+ lifeCatalog=list;
+ return list;
+}
+function lifeStoryTalent(life){return life.talents.includes('featured')?'featured':life.talents[0];}
+function lifeEligible(life,ev){
+ if(ev.noRandom||!life.talents.includes(ev.talent))return false;
+ if(ev.exclude&&lifeCond(life,ev.exclude))return false;
+ if(ev.include)return lifeCond(life,ev.include);
+ return true;
+}
+function lifeStep(life,talent){
+ let step=-1;
+ for(const id of life.seen){
+  const ev=lifeEvents().find(item=>item.id===id);
+  if(ev&&ev.talent===talent&&ev.index>=0)step=Math.max(step,ev.index);
+ }
+ return step;
+}
+function pickLife(r){
+ const life=r.narrative.life;
+ const talent=lifeStoryTalent(life);
+ const step=lifeStep(life,talent);
+ const ranked=lifeEvents().filter(ev=>lifeEligible(life,ev)).map(ev=>{
+  let weight=ev.weight;
+  if(ev.index===step+1)weight*=3;
+  if(ev.chapter?.offline&&ev.index<step)weight*=4;
+  if(ev.chapter?.choices?.some(c=>c.end)&&life.SPR<=2)weight*=3;
+  return [ev,weight];
+ });
+ if(ranked.length)return weighted(ranked,randomValue(r.narrative));
+ const next=lifeEvents().find(ev=>ev.talent===talent&&!ev.noRandom&&ev.index===step+1&&!life.seen.includes(ev.id));
+ return next||null;
+}
+function lifeBranch(r){
+ const life=r.narrative.life;
+ const talent=lifeStoryTalent(life);
+ if(life.SPR<=1&&!life.seen.includes(`${talent}#cold`))return lifeEvents().find(ev=>ev.id===`${talent}#cold`)||null;
+ return null;
+}
+function seedLife(r){
+ const p=r.profile,n=r.narrative,h=hashId(p.id||p.sourceProfileId||'');
+ const money={tight:2,comfortable:5,abundant:8}[p.resourceTier]??4;
+ const persona={P01:{INT:3,STR:4,SPR:4},P02:{INT:5,STR:2,SPR:6},P03:{INT:4,STR:5,SPR:5}}[p.storyPersonality]||{INT:4,STR:4,SPR:5};
+ const jitter=shift=>((h>>>shift)%3)-1;
+ const arc=n.kind==='featured'?'featured':(p.storyArc||arcForId(p.sourceProfileId||p.id));
+ const talents=n.kind==='featured'?['featured']:[arc];
+ if(p.id==='CHAR_003')talents.push('CHAR_003');
+ if(n.kind==='background')n.arcId=arc;
+ n.life={
+  CHR:lifeClamp(2+(h%4)),
+  INT:lifeClamp(persona.INT+jitter(2)),
+  STR:lifeClamp(persona.STR+jitter(4)),
+  MNY:lifeClamp(money),
+  SPR:lifeClamp(persona.SPR+jitter(6)),
+  AGE:0,talents,seen:[],choice:'',event:'',showed:false
+ };
+}
+function echoLines(r){
+ const life=r.narrative.life,name=r.profile.name;
+ if(life.SPR<=3)return [`${name}：我有点摸不准你还想不想聊。`,`${name}：不想的话你直说。`];
+ if(life.MNY<=2)return [`${name}：钱这事我自己紧着点。`,`${name}：你不用为这个表态。`];
+ if(life.MNY>=7)return [`${name}：钱的事我自己处理。`,`${name}：你不用为这个表态。`];
+ if(life.STR>=7)return [`${name}：你推得挺快。`,`${name}：我跟得上，但你说停我就停。`];
+ if(life.INT<=2)return [`${name}：刚才那句我没接住。`,`${name}：你要是想说清楚，可以再说一遍。`];
+ return [`${name}：刚才那句我又看了一遍。`,`${name}：先放这儿。`];
+}
+function coldLines(r){
+ const name=r.profile.name;
+ return [`${name}：心气不太够了。`,`${name}：先停在这儿吧。`];
+}
+function lifeChoicesOf(r,ev){
+ if(!ev)return [];
+ if(ev.echo)return [{id:'a',text:'接着说'},{id:'b',text:'先停一下'}];
+ if(ev.cold)return [
+  {id:'a',text:'那就先这样',end:{stage:'ended',ending:'apart',title:'心气停了',body:`${r.profile.name}没再往下聊。初始的心被这几次选择磨到了底。`,extra:'聊天记录还在。'}},
+  {id:'b',text:'再留一句也行',end:{stage:'ended',ending:'apart',title:'留了一句',body:`${r.profile.name}收下了最后一句，还是停了。`,extra:'之后没有新的话题进池子。'}}
+ ];
+ if(ev.durian)return ev.choices;
+ if(ev.beat)return ev.beat.choices;
+ return ev.chapter?.choices||[];
+}
+function currentLifeEvent(r){return lifeEvents().find(ev=>ev.id===r.narrative.life?.event)||null;}
+function presentLife(r,ev){
+ const n=r.narrative,life=n.life;
+ life.event=ev.id;
+ if(!life.seen.includes(ev.id))life.seen.push(ev.id);
+ if(ev.index>=0)n.beat=ev.index;
+ if(n.kind==='background')n.phase='arc';
+ if(n.kind==='featured'){n.phase='rush';n.rushIntro=true;}
+ if(ev.echo)sayFilled(r,echoLines(r));
+ else if(ev.cold)sayFilled(r,coldLines(r));
+ else if(ev.durian)rushSay(r,['{name}：不放照片，是因为当不了乐队主唱。','{name}：打鸣可能会迟到，但是从来不会缺席。','{name}：你先来一句。']);
+ else if(ev.beat){n.rushTitle=ev.beat.title;rushSay(r,ev.index===0?ev.beat.intro:ev.beat.intro);}
+ else if(ev.chapter){n.rushTitle=ev.chapter.title;sayFilled(r,ev.chapter.lines);if(ev.chapter.offline)n.metOffline=true;if(ev.chapter.stage)r.stage=ev.chapter.stage;}
+ if(!life.showed){storySay(r,lifeStatLine(life));life.showed=true;}
+ n.delivered=true;n.holding=false;
+}
+function applyLifeChoice(r,choice){
+ const life=r.narrative.life;
+ const before={CHR:life.CHR,INT:life.INT,STR:life.STR,MNY:life.MNY,SPR:life.SPR};
+ const id=String(choice.id);
+ const warm=id==='a'||id.endsWith('a');
+ const cool=id==='b'||id.endsWith('b');
+ if(warm){life.SPR=lifeClamp(life.SPR+1);life.INT=lifeClamp(life.INT+1);}
+ if(cool){life.SPR=lifeClamp(life.SPR-1);life.STR=lifeClamp(life.STR+1);}
+ const talent=lifeStoryTalent(life);
+ if(talent==='bill'&&cool)life.MNY=lifeClamp(life.MNY+1);
+ if(talent==='lust'&&warm)life.CHR=lifeClamp(life.CHR+1);
+ life.choice=id;life.AGE+=1;
+ return lifeDelta(before,life);
+}
+function advanceLife(r){
+ const forced=lifeBranch(r);
+ const next=forced||pickLife(r);
+ if(!next){r.narrative.phase='archive';r.narrative.holding=false;return false;}
+ presentLife(r,next);
+ return true;
+}
 function initializeNarrative(r,now=Date.now()){
  if(r.narrative)return;
  const old=r.history.length>1;
@@ -10537,6 +10759,13 @@ function currentArc(r){
 function npcUnmatchAllowed(profile){return kind(profile)==='background';}
 function ensureArc(r){
  const n=r.narrative;if(!n||n.kind!=='background'||n.phase==='archive'||n.socialPaused)return;
+ if(!n.life&&!(r.history||[]).length)seedLife(r);
+ if(n.life){
+  if(n.phase!=='arc'){n.phase='arc';if(!n.delivered)n.holding=false;}
+  if(n.holding||n.delivered)return;
+  const ev=pickLife(r);if(!ev){n.phase='archive';return;}
+  presentLife(r,ev);return;
+ }
  if(n.phase!=='arc'){n.phase='arc';if(!n.delivered){n.beat=0;n.holding=false;}}
  const story=currentArc(r);
  if(!Number.isInteger(n.beat)||n.beat<0||n.beat>=story.chapters.length)n.beat=0;
@@ -10551,6 +10780,11 @@ function seedArc(r){ensureArc(r);}
 function arcChoices(r){
  const n=r.narrative;ensureArc(r);
  if(n.phase!=='arc'||n.holding)return [];
+ if(n.life){
+  const ev=currentLifeEvent(r);if(!ev)return [];
+  if(ev.chapter?.title)n.rushTitle=ev.chapter.title;
+  return lifeChoicesOf(r,ev).map(c=>({id:`random:${c.id}`,text:fillPerson(c.text,r.profile)}));
+ }
  const chapter=currentArc(r).chapters[n.beat];if(!chapter)return [];
  n.rushTitle=chapter.title;
  return chapter.choices.map(c=>({id:`random:${c.id}`,text:fillPerson(c.text,r.profile)}));
@@ -10558,6 +10792,13 @@ function arcChoices(r){
 function arcAction(r,id,now){
  const n=r.narrative;ensureArc(r);
  if(n.holding||n.phase!=='arc')return false;
+ if(n.life){
+  const ev=currentLifeEvent(r);
+  const choice=lifeChoicesOf(r,ev).find(c=>c.id===id);if(!choice)return false;
+  say(r,fillPerson(choice.text,r.profile),'you');
+  n.pendingChoice=id;n.holding=true;n.holdSeq=n.pendingSeq??0;n.readyAt=now+ARC_WAIT;
+  return true;
+ }
  const chapter=currentArc(r).chapters[n.beat];
  const choice=chapter?.choices.find(c=>c.id===id);if(!choice)return false;
  say(r,fillPerson(choice.text,r.profile),'you');
@@ -10574,6 +10815,18 @@ function releaseArc(r,state,now=Date.now()){
  const n=r.narrative;
  if(!n||n.kind!=='background'||n.phase!=='arc'||!n.holding)return false;
  if((state?.lifeSeq||0)<=(n.holdSeq||0)&&now<(n.readyAt??Infinity))return false;
+ if(n.life){
+  const ev=currentLifeEvent(r);
+  const choice=lifeChoicesOf(r,ev).find(c=>c.id===n.pendingChoice);
+  if(!choice){n.holding=false;return false;}
+  sayFilled(r,choice.reply);
+  const delta=applyLifeChoice(r,choice);
+  if(delta)storySay(r,delta);
+  n.holding=false;n.pendingChoice=null;
+  if(choice.end){finishArc(r,choice);return true;}
+  advanceLife(r);
+  return true;
+ }
  const chapter=currentArc(r).chapters[n.beat];
  const choice=chapter?.choices.find(c=>c.id===n.pendingChoice);
  if(!choice){n.holding=false;return false;}
@@ -10598,6 +10851,13 @@ function releaseArcs(state,now=Date.now()){
 function ensureRush(r){
  const n=r.narrative;if(!n||n.kind==='mainline'||n.phase==='archive'||n.socialPaused)return;
  if(n.kind==='background'){ensureArc(r);return;}
+ if(!n.life&&!(r.history||[]).length)seedLife(r);
+ if(n.life){
+  if(n.phase!=='rush'){n.phase='rush';n.beat=0;n.active=null;}
+  if(n.holding||n.delivered)return;
+  const ev=pickLife(r);if(!ev){n.phase='archive';return;}
+  presentLife(r,ev);return;
+ }
  if(n.phase!=='rush'){n.phase='rush';n.beat=0;n.active=null;}
  if(!Number.isInteger(n.beat)||n.beat<0||n.beat>=rushBeats.length)n.beat=0;
  if(!n.rushIntro){
@@ -10624,12 +10884,39 @@ function randomChoices(r){
  const n=r.narrative;if(!n||n.kind==='mainline')return [];
  if(n.kind==='background')return arcChoices(r);
  ensureRush(r);if(n.phase!=='rush')return [];
+ if(n.life){
+  const ev=currentLifeEvent(r);if(!ev)return [];
+  if(ev.beat?.title)n.rushTitle=ev.beat.title;
+  return lifeChoicesOf(r,ev).map(c=>({id:`random:${c.id}`,text:rushFill(r,c.text)}));
+ }
  const beat=rushBeats[n.beat];if(!beat)return [];
  n.rushTitle=beat.title;
  return beat.choices.map(c=>({id:`random:${c.id}`,text:c.text}));
 }
 function rushAction(r,id){
- const n=r.narrative,beat=rushBeats[n.beat],choice=beat?.choices.find(c=>c.id===id);if(!choice)return false;
+ const n=r.narrative;
+ if(n.life){
+  const ev=currentLifeEvent(r);
+  const choice=lifeChoicesOf(r,ev).find(c=>c.id===id);if(!choice)return false;
+  say(r,rushFill(r,choice.text),'you');
+  if(choice.lines)rushSay(r,choice.lines);
+  else sayFilled(r,choice.reply);
+  const delta=applyLifeChoice(r,choice);
+  if(delta)storySay(r,delta);
+  if(choice.end){
+   n.phase='archive';n.endingPending=true;n.active=null;
+   if(typeof choice.end==='string'){
+    r.stage=choice.stage;r.ending=choice.end;
+    n.rushEnding={title:rushFill(r,choice.title),text:rushFill(r,choice.body),extra:rushFill(r,choice.extra)};
+   }else{
+    r.stage=choice.end.stage;r.ending=choice.end.ending;
+    n.rushEnding={title:rushFill(r,choice.end.title),text:rushFill(r,choice.end.body),extra:rushFill(r,choice.end.extra)};
+   }
+   return true;
+  }
+  advanceLife(r);return true;
+ }
+ const beat=rushBeats[n.beat],choice=beat?.choices.find(c=>c.id===id);if(!choice)return false;
  say(r,choice.text,'you');rushSay(r,choice.lines);
  if(choice.end){
   r.stage=choice.stage;r.ending=choice.end;n.phase='archive';n.endingPending=true;n.active=null;
