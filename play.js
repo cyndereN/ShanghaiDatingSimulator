@@ -10374,8 +10374,10 @@ const storyContent = {
 
 // Content is maintained in the character workbook and imported as JSON.
 const ARC_WAIT = 3 * 60 * 1000;
-const MATCH_CHANCE = 0.4;
-const QUIET_CHANCE = 0.22;
+const MATCH_CHANCE = 0.5;
+const QUIET_CHANCE = 0.5;
+const NO_REPLY_CHANCE = 0.45;
+const SHORT_BIO_CHANCE = 0.62;
 const QUIET_LINES = [
  {id:'quiet:hi',text:'你们匹配了。有人发了句 hi，之后就没下文。'},
  {id:'quiet:step',text:'你们匹配了。谁也不敢迈出第一步。'},
@@ -10493,19 +10495,23 @@ function claimBio(p,text){
  if(!text||dialogueHeard(id))return false;
  p.bio=text;p.bioLock=id;markDialogue(id);return true;
 }
+function isMajorProfile(p){return !!(p&&(p.major||String(p.id||'').startsWith('CHAR_')));}
 function freshShortBio(p){
  const hobby=p.interests?.[0]||'吃饭',district=p.district||'上海';
  const lines=SHORT_BIOS.map(t=>t.replaceAll('{hobby}',hobby).replaceAll('{district}',district).replaceAll('{job}',p.job||'上班'));
- for(let i=lines.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[lines[i],lines[j]]=[lines[j],lines[i]];}
- return lines.find(t=>!dialogueHeard(bioHeardId(t)))||`不约${hobby}。${p.name||''}，${district}。`;
+ return lines[Math.floor(Math.random()*lines.length)];
 }
 function ensureUniqueBio(p){
  if(!p)return false;
+ if(isMajorProfile(p)){const id=bioHeardId(p.bio);if(p.bio&&!dialogueHeard(id))markDialogue(id);return false;}
  const before=p.bio;
- if(p.bioLock&&p.bio&&p.bioLock===bioHeardId(p.bio)){if(!dialogueHeard(p.bioLock))markDialogue(p.bioLock);return false;}
- if(claimBio(p,p.bio))return p.bio!==before;
- const next=freshShortBio(p);
- if(!claimBio(p,next)){p.bio=next;p.bioLock=bioHeardId(next);markDialogue(p.bioLock);}
+ if(p.bioLock&&p.bio&&(p.bioLock===bioHeardId(p.bio)||String(p.bioLock).endsWith(':short'))){
+  if(!String(p.bioLock).endsWith(':short')&&!dialogueHeard(p.bioLock))markDialogue(p.bioLock);
+  return false;
+ }
+ const preferShort=Math.random()<SHORT_BIO_CHANCE||dialogueHeard(bioHeardId(p.bio));
+ if(!preferShort&&claimBio(p,p.bio))return p.bio!==before;
+ p.bio=freshShortBio(p);p.bioLock=bioHeardId(p.bio)+':short';
  return true;
 }
 function ensureUniqueBios(state){
@@ -10576,7 +10582,6 @@ function randomValue(n){n.rngState=(Math.imul(n.rngState,1664525)+1013904223)>>>
 // include/exclude pass, and draws one by weight. Seen events and stat
 // changes are what let the next event into the pool. NoRandom events
 // stay out of the draw and only arrive through a branch.
-const LIFE_NAMES={CHR:'脸',INT:'嘴',STR:'劲',MNY:'钱',SPR:'心'};
 function lifeClamp(n){return Math.max(0,Math.min(10,n));}
 function lifeParse(condition){
  const conditions=[];
@@ -10632,15 +10637,6 @@ function lifeEval(life,node){
  return ok;
 }
 function lifeCond(life,expr){return !expr||lifeEval(life,lifeParse(expr));}
-function lifeStatLine(life){
- return ['CHR','INT','STR','MNY','SPR'].map(k=>`${LIFE_NAMES[k]} ${life[k]}`).join(' · ');
-}
-function lifeDelta(before,after){
- return ['CHR','INT','STR','MNY','SPR'].flatMap(k=>{
-  const d=after[k]-before[k];
-  return d?`${LIFE_NAMES[k]} ${d>0?'+':''}${d}`:[];
- }).join('，');
-}
 let lifeCatalog;
 function lifeEvents(){
  if(lifeCatalog)return lifeCatalog;
@@ -10772,6 +10768,29 @@ function lifeChoicesOf(r,ev){
  return ev.chapter?.choices||[];
 }
 function currentLifeEvent(r){return lifeEvents().find(ev=>ev.id===r.narrative.life?.event)||null;}
+function laterDays(min=1,max=3){return (min+Math.floor(Math.random()*(max-min+1)))*DAY;}
+function storyLinesOf(r,lines){
+ const fill=r.narrative?.kind==='featured'?t=>rushFill(r,t):t=>fillPerson(t,r.profile);
+ return (lines||[]).flatMap(line=>String(fill(line)).split('\n')).map(t=>t.trim()).filter(Boolean);
+}
+function dripStory(r,lines,raw=false){
+ const n=r.narrative;if(!n)return;
+ const filled=raw?(lines||[]).flatMap(line=>String(line).split('\n')).map(t=>t.trim()).filter(Boolean):storyLinesOf(r,lines);
+ if(!filled.length)return;
+ n.lineQueue=n.lineQueue||[];
+ const nowCount=Math.min(filled.length,1+Math.floor(Math.random()*2));
+ for(const line of filled.slice(0,nowCount))storySay(r,line);
+ const rest=filled.slice(nowCount);
+ if(rest.length){n.lineQueue.push(...rest);n.lineDueAt=Date.now()+laterDays();}
+}
+function storyWaiting(n){return !!(n&&(n.lineQueue?.length||n.afterQueue));}
+function maybeGhost(r){return !isMajorProfile(r.profile)&&Math.random()<NO_REPLY_CHANCE;}
+function ghostReply(r){
+ const n=r.narrative;
+ n.ghosted=true;n.lineQueue=[];n.lineDueAt=0;n.afterQueue=null;n.holding=false;n.pendingChoice=null;
+ storySay(r,'对方看过了，没有再回。');
+ n.phase='quiet';
+}
 function presentLife(r,ev){
  const n=r.narrative,life=n.life;
  life.event=ev.id;
@@ -10782,17 +10801,47 @@ function presentLife(r,ev){
  if(ev.index>=0)n.beat=ev.index;
  if(n.kind==='background')n.phase='arc';
  if(n.kind==='featured'){n.phase='rush';n.rushIntro=true;}
- if(ev.echo)sayFilled(r,echoLines(r));
- else if(ev.cold)sayFilled(r,coldLines(r));
- else if(ev.durian)rushSay(r,['{name}：不放照片，是因为当不了乐队主唱。','{name}：打鸣可能会迟到，但是从来不会缺席。','{name}：你先来一句。']);
- else if(ev.beat){n.rushTitle=ev.beat.title;rushSay(r,ev.index===0?ev.beat.intro:ev.beat.intro);}
- else if(ev.chapter){n.rushTitle=ev.chapter.title;sayFilled(r,ev.chapter.lines);if(ev.chapter.offline)n.metOffline=true;if(ev.chapter.stage)r.stage=ev.chapter.stage;}
- if(!life.showed){storySay(r,lifeStatLine(life));life.showed=true;}
+ if(ev.echo)dripStory(r,echoLines(r));
+ else if(ev.cold)dripStory(r,coldLines(r));
+ else if(ev.durian){dripStory(r,['{name}：不放照片，是因为当不了乐队主唱。','{name}：打鸣可能会迟到，但是从来不会缺席。','{name}：你先来一句。']);}
+ else if(ev.beat){n.rushTitle=ev.beat.title;dripStory(r,ev.beat.intro);}
+ else if(ev.chapter){n.rushTitle=ev.chapter.title;dripStory(r,ev.chapter.lines);if(ev.chapter.offline)n.metOffline=true;if(ev.chapter.stage)r.stage=ev.chapter.stage;}
  n.delivered=true;n.holding=false;
+}
+function pumpStory(r,now=Date.now()){
+ const n=r.narrative;if(!n||n.ghosted||n.phase==='quiet'||n.phase==='archive')return false;
+ let changed=false;
+ if(n.lineQueue?.length&&now>=(n.lineDueAt||0)){
+  const batch=n.lineQueue.splice(0,1+Math.floor(Math.random()*2));
+  for(const line of batch)storySay(r,line);
+  n.lineDueAt=n.lineQueue.length?now+laterDays():(n.afterQueue?now+laterDays(1,2):0);
+  r.unread=true;changed=true;
+ }
+ if(!n.lineQueue?.length&&n.afterQueue&&now>=(n.lineDueAt||0)){
+  const job=n.afterQueue;n.afterQueue=null;n.lineDueAt=0;
+  if(job==='advance')advanceLife(r);
+  else if(job==='legacy-next'){
+   const story=currentArc(r);n.beat++;const next=story.chapters[n.beat];
+   if(!next)n.phase='archive';
+   else{n.rushTitle=next.title;dripStory(r,next.lines);n.delivered=true;if(next.offline)n.metOffline=true;if(next.stage)r.stage=next.stage;}
+  }
+  else if(job==='rush-beat'){
+   n.beat++;const next=rushBeats[n.beat];
+   if(!next)n.phase='archive';
+   else{if(n.beat===1)r.stage='friends';n.rushTitle=next.title;dripStory(r,next.intro);}
+  }
+  else if(job==='arc-end'&&n.pendingEnd)finishArc(r,{end:n.pendingEnd});
+  else if(job==='rush-end'&&n.pendingEnd){
+   const end=n.pendingEnd;n.phase='archive';n.endingPending=true;n.active=null;
+   r.stage=end.stage;r.ending=end.ending;
+   n.rushEnding={title:rushFill(r,end.title),text:rushFill(r,end.body),extra:rushFill(r,end.extra)};
+  }
+  r.unread=true;changed=true;
+ }
+ return changed;
 }
 function applyLifeChoice(r,choice){
  const life=r.narrative.life;
- const before={CHR:life.CHR,INT:life.INT,STR:life.STR,MNY:life.MNY,SPR:life.SPR};
  const id=String(choice.id);
  const warm=id==='a'||id.endsWith('a');
  const cool=id==='b'||id.endsWith('b');
@@ -10802,7 +10851,6 @@ function applyLifeChoice(r,choice){
  if(talent==='bill'&&cool)life.MNY=lifeClamp(life.MNY+1);
  if(talent==='lust'&&warm)life.CHR=lifeClamp(life.CHR+1);
  life.choice=id;life.AGE+=1;
- return lifeDelta(before,life);
 }
 function advanceLife(r){
  const forced=lifeBranch(r);
@@ -10879,7 +10927,7 @@ function currentArc(r){
 function npcUnmatchAllowed(profile){return kind(profile)==='background';}
 function ensureArc(r){
  const n=r.narrative;if(!n||n.kind!=='background'||n.phase==='archive'||n.phase==='quiet'||n.socialPaused)return;
- if(!n.life&&!(r.history||[]).length)seedLife(r);
+ if(!n.life&&!n.delivered&&!n.rushIntro)seedLife(r);
  if(n.life){
   if(n.phase!=='arc'){n.phase='arc';if(!n.delivered)n.holding=false;}
   if(n.holding||n.delivered)return;
@@ -10900,7 +10948,7 @@ function ensureArc(r){
 function seedArc(r){ensureArc(r);}
 function arcChoices(r){
  const n=r.narrative;ensureArc(r);
- if(n.phase!=='arc'||n.holding)return [];
+ if(n.phase!=='arc'||n.holding||storyWaiting(n))return [];
  if(n.life){
   const ev=currentLifeEvent(r);if(!ev)return [];
   if(ev.chapter?.title)n.rushTitle=ev.chapter.title;
@@ -10940,25 +10988,21 @@ function releaseArc(r,state,now=Date.now()){
   const ev=currentLifeEvent(r);
   const choice=lifeChoicesOf(r,ev).find(c=>c.id===n.pendingChoice);
   if(!choice){n.holding=false;return false;}
-  sayFilled(r,choice.reply);
-  const delta=applyLifeChoice(r,choice);
-  if(delta)storySay(r,delta);
+  if(maybeGhost(r)){ghostReply(r);return true;}
+  applyLifeChoice(r,choice);
   n.holding=false;n.pendingChoice=null;
-  if(choice.end){finishArc(r,choice);return true;}
-  advanceLife(r);
+  dripStory(r,choice.reply);
+  if(choice.end){n.afterQueue='arc-end';n.pendingEnd=choice.end;if(!n.lineQueue?.length)n.lineDueAt=now+laterDays(1,2);}
+  else{n.afterQueue='advance';if(!n.lineQueue?.length)n.lineDueAt=now+laterDays(1,2);}
   return true;
  }
  const chapter=currentArc(r).chapters[n.beat];
  const choice=chapter?.choices.find(c=>c.id===n.pendingChoice);
  if(!choice){n.holding=false;return false;}
- sayFilled(r,choice.reply);n.holding=false;n.pendingChoice=null;
- if(choice.end){finishArc(r,choice);return true;}
- const story=currentArc(r);n.beat++;
- const next=story.chapters[n.beat];
- if(!next){n.phase='archive';return true;}
- n.rushTitle=next.title;sayFilled(r,next.lines);n.delivered=true;
- if(next.offline)n.metOffline=true;
- if(next.stage)r.stage=next.stage;
+ if(maybeGhost(r)){ghostReply(r);return true;}
+ dripStory(r,choice.reply);n.holding=false;n.pendingChoice=null;
+ if(choice.end){n.afterQueue='arc-end';n.pendingEnd=choice.end;if(!n.lineQueue?.length)n.lineDueAt=now+laterDays(1,2);return true;}
+ n.afterQueue='legacy-next';if(!n.lineQueue?.length)n.lineDueAt=now+laterDays(1,2);
  return true;
 }
 function releaseArcs(state,now=Date.now()){
@@ -10972,7 +11016,7 @@ function releaseArcs(state,now=Date.now()){
 function ensureRush(r){
  const n=r.narrative;if(!n||n.kind==='mainline'||n.phase==='archive'||n.phase==='quiet'||n.socialPaused)return;
  if(n.kind==='background'){ensureArc(r);return;}
- if(!n.life&&!(r.history||[]).length)seedLife(r);
+ if(!n.life&&!n.delivered&&!n.rushIntro)seedLife(r);
  if(n.life){
   if(n.phase!=='rush'){n.phase='rush';n.beat=0;n.active=null;}
   if(n.holding||n.delivered)return;
@@ -11004,7 +11048,7 @@ function startRandom(r,now){
 function randomChoices(r){
  const n=r.narrative;if(!n||n.kind==='mainline')return [];
  if(n.kind==='background')return arcChoices(r);
- ensureRush(r);if(n.phase!=='rush')return [];
+ ensureRush(r);if(n.phase!=='rush'||storyWaiting(n))return [];
  if(n.life){
   const ev=currentLifeEvent(r);if(!ev)return [];
   if(ev.beat?.title)n.rushTitle=ev.beat.title;
@@ -11020,33 +11064,24 @@ function rushAction(r,id){
   const ev=currentLifeEvent(r);
   const choice=lifeChoicesOf(r,ev).find(c=>c.id===id);if(!choice)return false;
   say(r,rushFill(r,choice.text),'you');
-  if(choice.lines)rushSay(r,choice.lines);
-  else sayFilled(r,choice.reply);
-  const delta=applyLifeChoice(r,choice);
-  if(delta)storySay(r,delta);
+  applyLifeChoice(r,choice);
+  dripStory(r,choice.lines||choice.reply);
   if(choice.end){
-   n.phase='archive';n.endingPending=true;n.active=null;
-   if(typeof choice.end==='string'){
-    r.stage=choice.stage;r.ending=choice.end;
-    n.rushEnding={title:rushFill(r,choice.title),text:rushFill(r,choice.body),extra:rushFill(r,choice.extra)};
-   }else{
-    r.stage=choice.end.stage;r.ending=choice.end.ending;
-    n.rushEnding={title:rushFill(r,choice.end.title),text:rushFill(r,choice.end.body),extra:rushFill(r,choice.end.extra)};
-   }
+   if(typeof choice.end==='string'){n.afterQueue='rush-end';n.pendingEnd={stage:choice.stage,ending:choice.end,title:choice.title,body:choice.body,extra:choice.extra};}
+   else{n.afterQueue='arc-end';n.pendingEnd=choice.end;}
+   if(!n.lineQueue?.length)n.lineDueAt=Date.now()+laterDays(1,2);
    return true;
   }
-  advanceLife(r);return true;
+  n.afterQueue='advance';if(!n.lineQueue?.length)n.lineDueAt=Date.now()+laterDays(1,2);return true;
  }
  const beat=rushBeats[n.beat],choice=beat?.choices.find(c=>c.id===id);if(!choice)return false;
- say(r,choice.text,'you');rushSay(r,choice.lines);
+ say(r,choice.text,'you');dripStory(r,choice.lines);
  if(choice.end){
-  r.stage=choice.stage;r.ending=choice.end;n.phase='archive';n.endingPending=true;n.active=null;
-  n.rushEnding={title:rushFill(r,choice.title),text:rushFill(r,choice.body),extra:rushFill(r,choice.extra)};
+  n.afterQueue='rush-end';n.pendingEnd={stage:choice.stage,ending:choice.end,title:choice.title,body:choice.body,extra:choice.extra};
+  if(!n.lineQueue?.length)n.lineDueAt=Date.now()+laterDays(1,2);
   return true;
  }
- n.beat++;const next=rushBeats[n.beat];if(!next){n.phase='archive';return true;}
- if(n.beat===1)r.stage='friends';
- n.rushTitle=next.title;rushSay(r,next.intro);return true;
+ n.afterQueue='rush-beat';if(!n.lineQueue?.length)n.lineDueAt=Date.now()+laterDays(1,2);return true;
 }
 function randomAction(r,id,now){
  const n=r.narrative;
@@ -11087,7 +11122,7 @@ const offsets={P00:0,P01:1,P02:5,P03:12,P04:12,P05:13,P06:19,P07:26,P08:28,P08C:
 const mainNode=r=>mainNodes.get(r.narrative?.node);
 const gateSpecs={P08C:[['privacy','咱俩的事不往外说，不拍照不录像，谁想停就停。'],['protection','防护和健康情况都聊清楚了，安全条件不合适就不继续。'],['capacity','我们都成年了，现在也清醒，能自己决定要不要继续。']],P13:[['exclusivity','在一起以后就只跟彼此谈恋爱、发生亲密关系。想改先说，不查岗，也不翻以前没说好的旧账。'],['contact','每周找个都有空的时间见面。不用随时回消息，有事改期提前说。'],['space','想自己待着就说，不想做的事也能拒绝。有新想法咱们再聊。']]};
 function mainChoices(r,now=Date.now()){
- const n=r.narrative,node=mainNode(r);if(!node||now<n.dueAt||n.appointment&&!n.appointment.resolved||n.phase==='archive')return [];
+ const n=r.narrative,node=mainNode(r);if(!node||now<n.dueAt||n.appointment&&!n.appointment.resolved||n.phase==='archive'||storyWaiting(n))return [];
  if(n.node==='P08C'&&n.gateStep<3||n.node==='P13'&&n.gateStep<3){const spec=gateSpecs[n.node][n.gateStep];return [{id:'main:gate',text:spec[1]},{id:'main:stop',text:'还没谈妥，先保持朋友'}];}
  if(n.node==='P10'&&(n.lifeStep||0)<3){const texts=['这次没空就算啦，下次再约。','下次就散个步吧，散完各回各家。','最近怎么样？有空再回我就行。'];return [{id:'main:life',text:texts[n.lifeStep||0]},{id:'main:stop',text:'我想先停下来，还是做朋友吧'}];}
  if(node.auto_next)return [{id:'main:extra',text:'阅读番外'}];
@@ -11114,7 +11149,7 @@ function presentMain(r,now=Date.now()){
  if(node.id==='P10'&&(n.lifeStep||0)<3)return false;
  if((node.id==='P08C'||node.id==='P13')&&n.gateStep<3)return false;
  if(node.id==='P09'&&!['peach_boundary_details_confirmed','peach_safety_conditions_met','peach_npc_present_consent','peach_player_consent_now'].every(f=>n.flags[f]))return false;
- n.presented=node.id;storySay(r,node.body.split('\n').filter(line=>!/^【(?:系统约束|硬条件|非交互摘要|非交互过场，硬条件|本次 demo)/.test(line)).map(line=>line.replace(/^【[^】]+】/,'')).join('\n'));
+ n.presented=node.id;dripStory(r,node.body.split('\n').filter(line=>!/^【(?:系统约束|硬条件|非交互摘要|非交互过场，硬条件|本次 demo)/.test(line)).map(line=>line.replace(/^【[^】]+】/,'')),true);
  if(node.stage==='朋友')r.stage='friends';if(node.stage.startsWith('炮友')&&!n.friendRomance)r.stage='intimate';
  if(['EH','EB'].includes(node.id)){r.stage='ended';r.ending=node.id==='EH'?'love':'apart';n.endingPending=true;}
  if(node.id==='EF')r.stage='friends';
@@ -11246,24 +11281,25 @@ function availableTemplates(s){
  return authoredProfiles.filter(p=>!used.has(p.profile_id)&&!(s.retired||[]).includes(`bg_${p.profile_id}`));
 }
 function dailyDeck(s,now){
- const unavailable=new Set([...s.matches.map(r=>r.profile.id),...s.pending.map(p=>p.id),...(s.retired||[])]);
- const majors=majorProfiles().filter(p=>!unavailable.has(p.id));
+ const waiting=new Set((s.pending||[]).map(p=>p.id));
+ const majors=majorProfiles().filter(p=>!waiting.has(p.id));
  for(let i=majors.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[majors[i],majors[j]]=[majors[j],majors[i]];}
+ const cast=majors.slice(0,3);
  const score=p=>p.interests.filter(t=>s.preferences.includes(t)).length;
- const available=availableTemplates(s);s.deck=[];
- for(let i=0;i<20;i++){
-  if(((i+1)%10===0||!available.length)&&majors.length){s.deck.push(majors.pop());continue;}
-  if(!available.length)break;
+ const available=availableTemplates(s);const backgrounds=[];
+ for(let i=0;i<20-cast.length&&available.length;i++){
   const candidates=[];const pool=[...available];
   for(let j=0;j<(i%2===0&&s.preferences.length?4:1)&&pool.length;j++){const k=Math.floor(Math.random()*pool.length);candidates.push(pool.splice(k,1)[0]);}
   const selected=candidates.map(template=>({template,p:catalogProfile(s,template)})).sort((a,b)=>score(b.p)-score(a.p))[0];
-  available.splice(available.findIndex(p=>p.profile_id===selected.template.profile_id),1);s.deck.push(selected.p);
+  available.splice(available.findIndex(p=>p.profile_id===selected.template.profile_id),1);backgrounds.push(selected.p);
  }
+ s.deck=[...backgrounds,...cast];
+ for(let i=s.deck.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[s.deck[i],s.deck[j]]=[s.deck[j],s.deck[i]];}
  s.discoveryDay=dayKey(now);s.dailyUsed=0;
  ensureUniqueBios(s);
 }
 function fresh(now=Date.now()) {
- const state={version:1,likePolicy:2,matchRate:2,serial:7,created:now,nextLikeAt:now+90000,likes:0,likeCursor:0,incoming:[],catalog:{},retired:[],heard:[],deck:[],pending:[],matches:[],archives:[],skipped:[],endings:[],preferences:[],textSize:'normal'};
+ const state={version:1,likePolicy:2,matchRate:3,serial:7,created:now,nextLikeAt:now+90000,likes:0,likeCursor:0,incoming:[],catalog:{},retired:[],heard:[],deck:[],pending:[],matches:[],archives:[],skipped:[],endings:[],preferences:[],textSize:'normal'};
  dailyDeck(state,now);
  return state;
 }
@@ -11273,6 +11309,8 @@ function relation(p,now=Date.now()) {
  initializeNarrative(r,now);
  if(kind(p)==='background'&&Math.random()<QUIET_CHANCE&&takeQuiet(r)){r.unread=true;return r;}
  if(p.sourceProfileId)seedArc(r);
+ if(isMajorProfile(p)&&kind(p)==='featured')ensureRush(r);
+ if(isMajorProfile(p)&&kind(p)==='mainline'&&!r.history.some(m=>m.who==='them'))say(r,'桃子：匹配到了。我先打个招呼。');
  if(kind(p)==='background'&&r.narrative.phase!=='arc'&&r.narrative.phase!=='quiet'&&!takeQuiet(r))return null;
  r.unread=p.id!=='CHAR_001'&&r.history.length>0;
  return r;
@@ -11292,16 +11330,16 @@ function archiveRelation(state,id,now=Date.now()) {
 }
 function tick(state,now=Date.now()) {
  let changed=false;
+ state.pending=state.pending.filter(p=>{if(p.readyAt>now)return true;if(p.wantsMatch&&!state.matches.some(r=>r.profile.id===p.id)){const rel=relation(p,now);if(rel)state.matches.push(rel);}changed=true;return false;});
  if(state.discoveryDay!==dayKey(now)){dailyDeck(state,now);state.lifeSeq=(state.lifeSeq||0)+1;changed=true;}
  if(now>=state.nextLikeAt&&state.incoming.length<6){
  const cursor=state.likeCursor||0,available=availableTemplates(state).filter(t=>!state.incoming.some(p=>p.sourceProfileId===t.profile_id));const p=cursor<3?majorProfiles()[cursor]:available.length?catalogProfile(state,pick(available)):null;state.likeCursor=cursor+1;
  if(p&&!state.matches.some(r=>r.profile.id===p.id)&&!(state.retired||[]).includes(p.id)&&!state.incoming.some(x=>x.id===p.id))state.incoming.push(p);
  state.likes=state.incoming.length;state.nextLikeAt=now+90000;changed=true;}
- state.pending=state.pending.filter(p=>{if(p.readyAt>now)return true;if(p.wantsMatch&&!state.matches.some(r=>r.profile.id===p.id)){const rel=relation(p,now);if(rel)state.matches.push(rel);}changed=true;return false;});
- for(const r of state.matches){if(updateNarrative(r,now))changed=true;}
+ for(const r of state.matches){if(updateNarrative(r,now)||pumpStory(r,now))changed=true;}
  if(releaseArcs(state,now))changed=true;
  const matched=new Set(state.matches.map(r=>r.profile.id)),matchedSources=new Set(state.matches.map(r=>r.profile.sourceProfileId).filter(Boolean));
- const isMatched=p=>matched.has(p.id)||p.sourceProfileId&&matchedSources.has(p.sourceProfileId);
+ const isMatched=p=>!isMajorProfile(p)&&(matched.has(p.id)||p.sourceProfileId&&matchedSources.has(p.sourceProfileId));
  if(state.deck.some(isMatched)){state.deck=state.deck.filter(p=>!isMatched(p));changed=true;}if(state.incoming.some(isMatched)){state.incoming=state.incoming.filter(p=>!isMatched(p));state.likes=state.incoming.length;changed=true;}
  for(const r of state.matches)if(r.appointment && !r.appointment.resolved && now>r.appointment.at+r.profile.person.grace*60000){r.appointment.resolved=true;r.appointment.missed=true;r.history.push({who:'them',text:r.profile.person.grace<=10?'刚才没有等到你。下次请提前说，我会重新安排自己的时间。':'刚才没碰上。你方便时再约一次吧，不用为此编一个复杂理由。'});r.unread=true;changed=true;}
  return changed;
@@ -11346,8 +11384,8 @@ function load(storage) {
   s.heard=[];
   for(const r of [...s.matches,...s.archives])for(const id of r.narrative?.life?.seen||[])if(!s.heard.includes(id))s.heard.push(id);
  }
- if(s.matchRate!==2){
-  s.matchRate=2;
+ if(s.matchRate!==3){
+  s.matchRate=3;
   const pending=new Set(s.pending.map(p=>p.id));
   for(const p of Object.values(s.catalog)){
    if(!p?.sourceProfileId||pending.has(p.id))continue;
@@ -11536,9 +11574,10 @@ function mountGame({notify,onMenu}){
   if(n.phase==='archive')return endingCard(r);
   if(n.phase==='quiet')return `<div class="chapter-note">这段匹配没有往下聊。</div>${button('messages','回到消息','text-button')}`;
   let text='',list=[];
-  if(n.kind==='mainline'){
+   if(n.kind==='mainline'){
    presentMain(r);recordEndings();save();
-   if(Date.now()<n.dueAt)text=`下次联系 · ${dateLabel(n.dueAt)}`;
+   if(storyWaiting(n))text='后面的话还要过几天。';
+   else if(Date.now()<n.dueAt)text=`下次联系 · ${dateLabel(n.dueAt)}`;
    else if(n.appointment&&!n.appointment.resolved)text=n.appointment.missed?'重新确认时间后再见。':'到约定时间后确认到场。';
    else if(n.node==='EF')text='留在朋友关系，不必继续推进。';
    else if(n.node==='P08C'&&n.gateStep<3)text='逐项谈清楚；没确认的条件不当作已经满足。';
@@ -11548,7 +11587,8 @@ function mountGame({notify,onMenu}){
   }   else{
    ensureRush(r);
    if(n.socialPaused)return `<div class="chapter-note">聊天先暂停，不自动解除连接。</div>${button('resume-chat','我想继续聊聊','pill')}`;
-   if(n.kind==='background'&&n.holding)text='对方还在过自己的日子。去跟别人聊几句、滑一张卡、换个页面，或过几分钟再回来。';
+   if(storyWaiting(n))text='后面的话还要过几天。';
+   else if(n.kind==='background'&&n.holding)text='对方还在过自己的日子。去跟别人聊几句、滑一张卡、换个页面，或过几分钟再回来。';
    else list=[...socialChoices(s,r),...(!n.socialPending?randomChoices(r):[])];
    if(!list.length&&n.phase==='idle')text=n.completed.length>=3?'最近聊到这里，之后有空再联系。':'这件事先放一放，可以先聊别的。';
   }
@@ -11641,7 +11681,13 @@ function mountGame({notify,onMenu}){
    try{await card.animate([{transform:card.style.transform||'none',opacity:1},{transform:`translateX(${like?1:-1}40vw) rotate(${like?18:-18}deg)`,opacity:0}],{duration:180,easing:'ease-in',fill:'forwards'}).finished;}catch{}
   }
   const p=s.deck.shift();s.dailyUsed++;s.lifeSeq=(s.lifeSeq||0)+1;releaseArcs(s);
-  if(like){s.pending.push({...p,readyAt:Date.now()+p.delay});s.preferences=[...new Set([...s.preferences,...p.interests])].slice(-5);notify('喜欢已送出');}
+  if(like){
+   if(isMajorProfile(p)&&s.matches.some(r=>r.profile.id===p.id))notify('你们已经在聊天了');
+   else{
+    const readyAt=Date.now()+(isMajorProfile(p)?p.delay:(Math.random()<0.35?(2+Math.floor(Math.random()*8))*3600000:(1+Math.floor(Math.random()*3))*DAY));
+    s.pending.push({...p,readyAt});s.preferences=[...new Set([...s.preferences,...p.interests])].slice(-5);notify('喜欢已送出');
+   }
+  }
   else s.skipped.push(p);
   s.skipped=s.skipped.slice(-60);save();swipeBusy=false;render();
  }
