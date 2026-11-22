@@ -10582,7 +10582,6 @@ function randomValue(n){n.rngState=(Math.imul(n.rngState,1664525)+1013904223)>>>
 // include/exclude pass, and draws one by weight. Seen events and stat
 // changes are what let the next event into the pool. NoRandom events
 // stay out of the draw and only arrive through a branch.
-const LIFE_NAMES={CHR:'脸',INT:'嘴',STR:'劲',MNY:'钱',SPR:'心'};
 function lifeClamp(n){return Math.max(0,Math.min(10,n));}
 function lifeParse(condition){
  const conditions=[];
@@ -10638,15 +10637,6 @@ function lifeEval(life,node){
  return ok;
 }
 function lifeCond(life,expr){return !expr||lifeEval(life,lifeParse(expr));}
-function lifeStatLine(life){
- return ['CHR','INT','STR','MNY','SPR'].map(k=>`${LIFE_NAMES[k]} ${life[k]}`).join(' · ');
-}
-function lifeDelta(before,after){
- return ['CHR','INT','STR','MNY','SPR'].flatMap(k=>{
-  const d=after[k]-before[k];
-  return d?`${LIFE_NAMES[k]} ${d>0?'+':''}${d}`:[];
- }).join('，');
-}
 let lifeCatalog;
 function lifeEvents(){
  if(lifeCatalog)return lifeCatalog;
@@ -10816,7 +10806,6 @@ function presentLife(r,ev){
  else if(ev.durian){dripStory(r,['{name}：不放照片，是因为当不了乐队主唱。','{name}：打鸣可能会迟到，但是从来不会缺席。','{name}：你先来一句。']);}
  else if(ev.beat){n.rushTitle=ev.beat.title;dripStory(r,ev.beat.intro);}
  else if(ev.chapter){n.rushTitle=ev.chapter.title;dripStory(r,ev.chapter.lines);if(ev.chapter.offline)n.metOffline=true;if(ev.chapter.stage)r.stage=ev.chapter.stage;}
- if(!life.showed){storySay(r,lifeStatLine(life));life.showed=true;}
  n.delivered=true;n.holding=false;
 }
 function pumpStory(r,now=Date.now()){
@@ -10853,7 +10842,6 @@ function pumpStory(r,now=Date.now()){
 }
 function applyLifeChoice(r,choice){
  const life=r.narrative.life;
- const before={CHR:life.CHR,INT:life.INT,STR:life.STR,MNY:life.MNY,SPR:life.SPR};
  const id=String(choice.id);
  const warm=id==='a'||id.endsWith('a');
  const cool=id==='b'||id.endsWith('b');
@@ -10863,7 +10851,6 @@ function applyLifeChoice(r,choice){
  if(talent==='bill'&&cool)life.MNY=lifeClamp(life.MNY+1);
  if(talent==='lust'&&warm)life.CHR=lifeClamp(life.CHR+1);
  life.choice=id;life.AGE+=1;
- return lifeDelta(before,life);
 }
 function advanceLife(r){
  const forced=lifeBranch(r);
@@ -11002,8 +10989,7 @@ function releaseArc(r,state,now=Date.now()){
   const choice=lifeChoicesOf(r,ev).find(c=>c.id===n.pendingChoice);
   if(!choice){n.holding=false;return false;}
   if(maybeGhost(r)){ghostReply(r);return true;}
-  const delta=applyLifeChoice(r,choice);
-  if(delta)storySay(r,delta);
+  applyLifeChoice(r,choice);
   n.holding=false;n.pendingChoice=null;
   dripStory(r,choice.reply);
   if(choice.end){n.afterQueue='arc-end';n.pendingEnd=choice.end;if(!n.lineQueue?.length)n.lineDueAt=now+laterDays(1,2);}
@@ -11078,8 +11064,7 @@ function rushAction(r,id){
   const ev=currentLifeEvent(r);
   const choice=lifeChoicesOf(r,ev).find(c=>c.id===id);if(!choice)return false;
   say(r,rushFill(r,choice.text),'you');
-  const delta=applyLifeChoice(r,choice);
-  if(delta)storySay(r,delta);
+  applyLifeChoice(r,choice);
   dripStory(r,choice.lines||choice.reply);
   if(choice.end){
    if(typeof choice.end==='string'){n.afterQueue='rush-end';n.pendingEnd={stage:choice.stage,ending:choice.end,title:choice.title,body:choice.body,extra:choice.extra};}
