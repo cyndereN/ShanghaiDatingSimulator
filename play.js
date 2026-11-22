@@ -10473,7 +10473,19 @@ const SHORT_BIOS=[
  '喜欢直接，不喜欢猜',
  '不约{hobby}',
  '在{district}，不挪窝',
- '不约，{district}见一面再说'
+ '不约，{district}见一面再说',
+ 'no ons',
+ 'no 419',
+ 'no fwb',
+ 'no ons 🚫',
+ 'no 419 🚫',
+ 'no fwb 🚫',
+ '🚫 no ons',
+ '🙅 no 419',
+ '🙅 no fwb',
+ 'no ons 🌙',
+ 'no 419 🛌',
+ 'no fwb 💔'
 ];
 function bioHeardId(text){return `bio:${String(text??'').replace(/\s+/g,' ').trim()}`;}
 function claimBio(p,text){
