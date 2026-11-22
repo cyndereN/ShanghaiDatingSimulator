@@ -11511,6 +11511,18 @@ function mountGame({notify,onMenu}){
  const currentArchive=()=>s.archives.find(r=>r.profile.id===archivedId);
  function msg(r,text,who='them'){r.history.push({who,text});r.unread=false;}
  function recordEndings(){for(const r of s.matches){const n=r.narrative;if(n?.endingPending&&!s.endings.some(x=>x.id===r.profile.id)){s.endings.push({id:r.profile.id,name:r.profile.name,fruit:r.profile.fruit,style:r.profile.style,key:r.ending,at:Date.now()});n.endingPending=false;}}}
+ function debugForward(days){
+  const now=Date.now(),step=days*DAY;
+  const pull=t=>Number.isFinite(t)&&t>now?Math.max(now,t-step):t;
+  for(const p of s.pending)p.readyAt=pull(p.readyAt);
+  for(const r of s.matches){
+   const n=r.narrative;if(!n)continue;
+   n.lineDueAt=pull(n.lineDueAt);n.dueAt=pull(n.dueAt);n.readyAt=pull(n.readyAt);
+   if(n.appointment&&!n.appointment.resolved)n.appointment.at=pull(n.appointment.at);
+  }
+  s.nextLikeAt=pull(s.nextLikeAt);s.discoveryDay='';s.lifeSeq=(s.lifeSeq||0)+1;
+  refresh();save();render();notify(days>1?`快进了 ${days} 天`:'快进了一天');
+ }
  function refresh(){
   const known=new Set(s.matches.map(r=>r.profile.id));
   const changed=tick(s),matched=s.matches.filter(r=>!known.has(r.profile.id));
@@ -11653,7 +11665,7 @@ function mountGame({notify,onMenu}){
   const follow=!sameView||!previousHistory||previousHistory.scrollHeight-previousScroll-previousHistory.clientHeight<=1;
   host.classList.toggle('large-text',s.textSize==='large');
   const nav=[['discover','✳','发现'],['likes','♡','喜欢我的'],['messages','▤','消息'],['settings','☷','设置']];
-  host.innerHTML=`<div class="game-frame"><aside class="game-sidebar"><button class="game-brand" data-action="discover">果然</button><nav aria-label="游戏导航">${nav.map(([id,icon,label])=>button(id,`<span aria-hidden="true">${icon}</span><span>${label}</span>${id==='messages'&&s.matches.some(r=>r.unread)?'<i class="unread-dot"></i>':''}`,`nav-item ${(tab==='archive'?'settings':tab)===id?'selected':''}`)).join('')}</nav></aside><div class="game-content" tabindex="-1">${active?chat():archivedId?archiveChat():({discover,likes,messages,settings,archive:archives}[tab]||discover)()}</div></div><dialog id="vip-dialog" aria-labelledby="vip-title"><span class="vip-mark">VIP</span><h2 id="vip-title">查看喜欢你的人</h2><p>此功能需要开通付费 VIP。</p><div class="button-row">${button('vip-info','开通 VIP','pill solid')}${button('vip-close','暂不','pill')}</div></dialog><dialog id="game-confirm"><h2>确认一下</h2><p id="confirm-copy"></p><div class="button-row">${button('cancel-confirm','取消','pill')}${button('accept-confirm','确认','pill solid')}</div></dialog>`;
+  host.innerHTML=`<div class="game-frame"><aside class="game-sidebar"><div class="brand-row"><button class="game-brand" data-action="discover">果然</button><button type="button" class="debug-button" data-action="debug">debug</button></div><nav aria-label="游戏导航">${nav.map(([id,icon,label])=>button(id,`<span aria-hidden="true">${icon}</span><span>${label}</span>${id==='messages'&&s.matches.some(r=>r.unread)?'<i class="unread-dot"></i>':''}`,`nav-item ${(tab==='archive'?'settings':tab)===id?'selected':''}`)).join('')}</nav></aside><div class="game-content" tabindex="-1">${active?chat():archivedId?archiveChat():({discover,likes,messages,settings,archive:archives}[tab]||discover)()}</div></div><dialog id="vip-dialog" aria-labelledby="vip-title"><span class="vip-mark">VIP</span><h2 id="vip-title">查看喜欢你的人</h2><p>此功能需要开通付费 VIP。</p><div class="button-row">${button('vip-info','开通 VIP','pill solid')}${button('vip-close','暂不','pill')}</div></dialog><dialog id="debug-dialog" aria-labelledby="debug-title"><h2 id="debug-title">调试</h2><p>把还要等的匹配和后几天的话往前推。牌也会按新的一天重新发。</p><div class="button-row">${button('debug-day','快进一天','pill solid')}${button('debug-days','快进三天','pill')}${button('debug-close','关闭','pill')}</div></dialog><dialog id="game-confirm"><h2>确认一下</h2><p id="confirm-copy"></p><div class="button-row">${button('cancel-confirm','取消','pill')}${button('accept-confirm','确认','pill solid')}</div></dialog>`;
   const card=host.querySelector('#profile-card');
   const history=host.querySelector('.chat-history');
   if(history)history.scrollTop=follow?history.scrollHeight:previousScroll;
@@ -11723,6 +11735,9 @@ function mountGame({notify,onMenu}){
   if(a.startsWith('archive-chat:')){const id=a.slice(13);if(!s.archives.some(r=>r.profile.id===id))return;active=null;archivedId=id;tab='archive';profileOpen=false;render();host.querySelector('.chat-top h1')?.focus({preventScroll:true});return;}
   if(a.startsWith('chat:'))return openChat(a.slice(5));
   if(a==='photo-prev'||a==='photo-next'){const p=archivedId?currentArchive()?.profile:active?current()?.profile:s.deck[0];if(p?.photos?.length){photoIndex[p.id]=((photoIndex[p.id]||0)+(a==='photo-next'?1:-1)+p.photos.length)%p.photos.length;const index=photoIndex[p.id],photo=p.photos[index];host.querySelectorAll('.profile-gallery').forEach(gallery=>{const backdrop=gallery.querySelector('.gallery-backdrop'),img=gallery.querySelector('.gallery-photo');if(backdrop)backdrop.src=photo.src;if(img){img.src=photo.src;img.alt=`${p.name}的第${index+1}张照片`;}const count=gallery.querySelector('.photo-count');if(count)count.textContent=`${index+1} / ${p.photos.length}`;gallery.querySelectorAll('.photo-dots i').forEach((dot,i)=>dot.classList.toggle('on',i===index));});}return;}
+  if(a==='debug'){host.querySelector('#debug-dialog').showModal();return;}
+  if(a==='debug-close'){host.querySelector('#debug-dialog').close();return;}
+  if(a==='debug-day'||a==='debug-days'){host.querySelector('#debug-dialog').close();return debugForward(a==='debug-days'?3:1);}
   if(a==='vip'){host.querySelector('#vip-dialog').showModal();return;}
   if(a==='vip-close'){host.querySelector('#vip-dialog').close();return;}
   if(a==='vip-info'){notify('VIP 暂未开放，当前不会收费。');return;}
