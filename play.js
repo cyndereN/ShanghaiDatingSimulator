@@ -10445,6 +10445,67 @@ function fillPerson(text, p = {}) {
   .replaceAll('{ghostDinner}', ghostCopy.dinner)
   .replaceAll('{ghostPlan}', ghostCopy.plan);
 }
+const SHORT_BIOS=[
+ '不加vx',
+ '喜欢直接点',
+ '不约饭',
+ '不约酒',
+ '不约过夜',
+ '不约咖啡',
+ '不约电影',
+ '不约散步',
+ '不约KTV',
+ '有话直说',
+ '匹配了就说话',
+ '别一上来要微信',
+ '不找短期',
+ '只找长期',
+ '照片是本人',
+ '回复慢，不是高冷',
+ '别问工资',
+ '认真的再划',
+ '玩玩的别划',
+ '不网恋',
+ '先聊清楚再见面',
+ '周末有空，工作日勿扰',
+ '不抽烟',
+ '不加vx，也不发语音',
+ '喜欢直接，不喜欢猜',
+ '不约{hobby}',
+ '在{district}，不挪窝',
+ '不约，{district}见一面再说'
+];
+function bioHeardId(text){return `bio:${String(text??'').replace(/\s+/g,' ').trim()}`;}
+function claimBio(p,text){
+ const id=bioHeardId(text);
+ if(!text||dialogueHeard(id))return false;
+ p.bio=text;p.bioLock=id;markDialogue(id);return true;
+}
+function freshShortBio(p){
+ const hobby=p.interests?.[0]||'吃饭',district=p.district||'上海';
+ const lines=SHORT_BIOS.map(t=>t.replaceAll('{hobby}',hobby).replaceAll('{district}',district).replaceAll('{job}',p.job||'上班'));
+ for(let i=lines.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[lines[i],lines[j]]=[lines[j],lines[i]];}
+ return lines.find(t=>!dialogueHeard(bioHeardId(t)))||`不约${hobby}。${p.name||''}，${district}。`;
+}
+function ensureUniqueBio(p){
+ if(!p)return false;
+ const before=p.bio;
+ if(p.bioLock&&p.bio&&p.bioLock===bioHeardId(p.bio)){if(!dialogueHeard(p.bioLock))markDialogue(p.bioLock);return false;}
+ if(claimBio(p,p.bio))return p.bio!==before;
+ const next=freshShortBio(p);
+ if(!claimBio(p,next)){p.bio=next;p.bioLock=bioHeardId(next);markDialogue(p.bioLock);}
+ return true;
+}
+function ensureUniqueBios(state){
+ if(!heardDialogues||!state)return false;
+ const lists=[state.deck,state.pending,state.incoming,state.skipped,(state.matches||[]).map(r=>r.profile),(state.archives||[]).map(r=>r.profile)];
+ const people=[];const seen=new Set();
+ for(const list of lists)for(const p of list||[]){if(!p||seen.has(p))continue;seen.add(p);people.push(p);}
+ people.sort((a,b)=>Number(b.major||String(b.id||'').startsWith('CHAR_'))-Number(a.major||String(a.id||'').startsWith('CHAR_')));
+ let changed=false;
+ for(const p of people)if(ensureUniqueBio(p))changed=true;
+ return changed;
+}
 function dressProfile(template, district) {
  const arc = arcById(template.story_arc || arcForId(template.profile_id));
  const v = hashId(`${template.profile_id}:copy`) % arc.bios.length;
@@ -11187,6 +11248,7 @@ function dailyDeck(s,now){
   available.splice(available.findIndex(p=>p.profile_id===selected.template.profile_id),1);s.deck.push(selected.p);
  }
  s.discoveryDay=dayKey(now);s.dailyUsed=0;
+ ensureUniqueBios(s);
 }
 function fresh(now=Date.now()) {
  const state={version:1,likePolicy:2,matchRate:2,serial:7,created:now,nextLikeAt:now+90000,likes:0,likeCursor:0,incoming:[],catalog:{},retired:[],heard:[],deck:[],pending:[],matches:[],archives:[],skipped:[],endings:[],preferences:[],textSize:'normal'};
@@ -11260,13 +11322,13 @@ function load(storage) {
  for(const p of [...Object.values(s.catalog),...s.deck,...s.pending,...s.incoming,...s.skipped,...s.matches.map(r=>r.profile)]){
   applyOrdinaryArt(p);
   const major=main.characters.find(t=>t.id===p.id);
-  if(major){p.bio=major.bio;p.boundary=major.boundary;}
+  if(major){if(!p.bioLock)p.bio=major.bio;p.boundary=major.boundary;}
   if(!p.sourceProfileId)continue;
   const template=authoredProfiles.find(t=>t.profile_id===p.sourceProfileId);if(!template)continue;
   p.name=template.nickname;p.age=template.age;p.fruit=profileFruit(template);p.interests=[...template.hobbies];p.resourceTier=template.resource_tier;p.expressionStyle=template.expression_style_id;p.lifeFacts=template.life_facts;
   p.portraitId=template.art_id;applyOrdinaryArt(p);
   const dressed=dressProfile(template,p.district||'上海');
-  p.job=template.job;p.bio=dressed.bio;p.boundary=dressed.boundary;p.question=dressed.question;p.answer=dressed.answer;p.storyArc=dressed.arcId;p.opener='';p.openerDelivery='none';
+  p.job=template.job;if(!p.bioLock)p.bio=dressed.bio;p.boundary=dressed.boundary;p.question=dressed.question;p.answer=dressed.answer;p.storyArc=dressed.arcId;p.opener='';p.openerDelivery='none';
  }
  if(!Array.isArray(s.heard)){
   s.heard=[];
@@ -11371,6 +11433,7 @@ function mountGame({notify,onMenu}){
  let renderedView=null,renderedProfileOpen=false;
  let deliveryTimer=null,deliveryKey=null,animatedEntry=-1;
  function save(){try{localStorage.setItem(SAVE_KEY,JSON.stringify(s));}catch{if(!storageWarned){storageWarned=true;notify('当前无法保存；请保持此窗口打开，关闭后可能丢失进度。');}}}
+ if(ensureUniqueBios(s))save();
  const current=()=>s.matches.find(r=>r.profile.id===active);
  const currentArchive=()=>s.archives.find(r=>r.profile.id===archivedId);
  function msg(r,text,who='them'){r.history.push({who,text});r.unread=false;}
