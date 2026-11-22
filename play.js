@@ -10793,16 +10793,10 @@ function lifeChoicesOf(r,ev){
  return ev.chapter?.choices||[];
 }
 function currentLifeEvent(r){return lifeEvents().find(ev=>ev.id===r.narrative.life?.event)||null;}
-function laterDays(min=1,max=3){return (min+Math.floor(Math.random()*(max-min+1)))*DAY;}
 function dripStory(r,lines,raw=false){
  const n=r.narrative;if(!n)return;
- const spoken=dialogueLines(r,lines,raw);
- if(!spoken.length)return;
- n.lineQueue=n.lineQueue||[];
- const nowCount=Math.min(spoken.length,1+Math.floor(Math.random()*2));
- for(const line of spoken.slice(0,nowCount))say(r,line,'them','message');
- const rest=spoken.slice(nowCount);
- if(rest.length){n.lineQueue.push(...rest);n.lineDueAt=Date.now()+laterDays();}
+ for(const line of dialogueLines(r,lines,raw))say(r,line,'them','message');
+ n.lineQueue=[];n.lineDueAt=0;
 }
 function storyWaiting(n){return !!(n&&(n.lineQueue?.length||n.afterQueue));}
 function maybeGhost(r){return !isMajorProfile(r.profile)&&Math.random()<NO_REPLY_CHANCE;}
@@ -10832,15 +10826,13 @@ function presentLife(r,ev){
 function pumpStory(r,now=Date.now()){
  const n=r.narrative;if(!n||n.ghosted||n.phase==='quiet'||n.phase==='archive')return false;
  let changed=false;
- if(n.lineQueue?.length&&now>=(n.lineDueAt||0)){
-  const want=1+Math.floor(Math.random()*2);
+ if(n.lineQueue?.length){
   const spoken=[];
-  while(n.lineQueue.length&&spoken.length<want)spoken.push(...dialogueLines(r,[n.lineQueue.shift()]));
+  while(n.lineQueue.length)spoken.push(...dialogueLines(r,[n.lineQueue.shift()]));
   for(const line of spoken)say(r,line,'them','message');
-  n.lineDueAt=n.lineQueue.length?now+laterDays():(n.afterQueue?now+laterDays(1,2):0);
-  r.unread=spoken.length>0;changed=true;
+  n.lineDueAt=0;r.unread=spoken.length>0;changed=true;
  }
- if(!n.lineQueue?.length&&n.afterQueue&&now>=(n.lineDueAt||0)){
+ if(!n.lineQueue?.length&&n.afterQueue){
   const job=n.afterQueue;n.afterQueue=null;n.lineDueAt=0;
   if(job==='advance')advanceLife(r);
   else if(job==='legacy-next'){
@@ -11015,8 +11007,8 @@ function releaseArc(r,state,now=Date.now()){
   applyLifeChoice(r,choice);
   n.holding=false;n.pendingChoice=null;
   dripStory(r,choice.reply);
-  if(choice.end){n.afterQueue='arc-end';n.pendingEnd=choice.end;if(!n.lineQueue?.length)n.lineDueAt=now+laterDays(1,2);}
-  else{n.afterQueue='advance';if(!n.lineQueue?.length)n.lineDueAt=now+laterDays(1,2);}
+  if(choice.end){finishArc(r,choice);return true;}
+  advanceLife(r);
   return true;
  }
  const chapter=currentArc(r).chapters[n.beat];
@@ -11024,8 +11016,13 @@ function releaseArc(r,state,now=Date.now()){
  if(!choice){n.holding=false;return false;}
  if(maybeGhost(r)){ghostReply(r);return true;}
  dripStory(r,choice.reply);n.holding=false;n.pendingChoice=null;
- if(choice.end){n.afterQueue='arc-end';n.pendingEnd=choice.end;if(!n.lineQueue?.length)n.lineDueAt=now+laterDays(1,2);return true;}
- n.afterQueue='legacy-next';if(!n.lineQueue?.length)n.lineDueAt=now+laterDays(1,2);
+ if(choice.end){finishArc(r,choice);return true;}
+ const story=currentArc(r);n.beat++;
+ const next=story.chapters[n.beat];
+ if(!next){n.phase='archive';return true;}
+ n.rushTitle=next.title;dripStory(r,next.lines);n.delivered=true;
+ if(next.offline)n.metOffline=true;
+ if(next.stage)r.stage=next.stage;
  return true;
 }
 function releaseArcs(state,now=Date.now()){
@@ -11090,21 +11087,25 @@ function rushAction(r,id){
   applyLifeChoice(r,choice);
   dripStory(r,choice.lines||choice.reply);
   if(choice.end){
-   if(typeof choice.end==='string'){n.afterQueue='rush-end';n.pendingEnd={stage:choice.stage,ending:choice.end,title:choice.title,body:choice.body,extra:choice.extra};}
-   else{n.afterQueue='arc-end';n.pendingEnd=choice.end;}
-   if(!n.lineQueue?.length)n.lineDueAt=Date.now()+laterDays(1,2);
+   n.phase='archive';n.endingPending=true;n.active=null;
+   if(typeof choice.end==='string'){
+    r.stage=choice.stage;r.ending=choice.end;
+    n.rushEnding={title:rushFill(r,choice.title),text:rushFill(r,choice.body),extra:rushFill(r,choice.extra)};
+   }else finishArc(r,choice);
    return true;
   }
-  n.afterQueue='advance';if(!n.lineQueue?.length)n.lineDueAt=Date.now()+laterDays(1,2);return true;
+  advanceLife(r);return true;
  }
  const beat=rushBeats[n.beat],choice=beat?.choices.find(c=>c.id===id);if(!choice)return false;
  say(r,choice.text,'you');dripStory(r,choice.lines);
  if(choice.end){
-  n.afterQueue='rush-end';n.pendingEnd={stage:choice.stage,ending:choice.end,title:choice.title,body:choice.body,extra:choice.extra};
-  if(!n.lineQueue?.length)n.lineDueAt=Date.now()+laterDays(1,2);
+  r.stage=choice.stage;r.ending=choice.end;n.phase='archive';n.endingPending=true;n.active=null;
+  n.rushEnding={title:rushFill(r,choice.title),text:rushFill(r,choice.body),extra:rushFill(r,choice.extra)};
   return true;
  }
- n.afterQueue='rush-beat';if(!n.lineQueue?.length)n.lineDueAt=Date.now()+laterDays(1,2);return true;
+ n.beat++;const next=rushBeats[n.beat];if(!next){n.phase='archive';return true;}
+ if(n.beat===1)r.stage='friends';
+ n.rushTitle=next.title;dripStory(r,next.intro);return true;
 }
 function randomAction(r,id,now){
  const n=r.narrative;
@@ -11610,9 +11611,9 @@ function mountGame({notify,onMenu}){
   if(n.phase==='quiet')return `<div class="chapter-note">这段匹配没有往下聊。</div>${button('messages','回到消息','text-button')}`;
   let text='',list=[];
    if(n.kind==='mainline'){
+   if(pumpStory(r))save();
    presentMain(r);recordEndings();save();
-   if(storyWaiting(n))text='后面的话还要过几天。';
-   else if(Date.now()<n.dueAt)text=`下次联系 · ${dateLabel(n.dueAt)}`;
+   if(Date.now()<n.dueAt)text=`下次联系 · ${dateLabel(n.dueAt)}`;
    else if(n.appointment&&!n.appointment.resolved)text=n.appointment.missed?'重新确认时间后再见。':'到约定时间后确认到场。';
    else if(n.node==='EF')text='留在朋友关系，不必继续推进。';
    else if(n.node==='P08C'&&n.gateStep<3)text='逐项谈清楚；没确认的条件不当作已经满足。';
@@ -11622,8 +11623,8 @@ function mountGame({notify,onMenu}){
   }   else{
    ensureRush(r);
    if(n.socialPaused)return `<div class="chapter-note">聊天先暂停，不自动解除连接。</div>${button('resume-chat','我想继续聊聊','pill')}`;
-   if(storyWaiting(n))text='后面的话还要过几天。';
-   else if(n.kind==='background'&&n.holding)text='对方还在过自己的日子。去跟别人聊几句、滑一张卡、换个页面，或过几分钟再回来。';
+   if(pumpStory(r))save();
+   if(n.kind==='background'&&n.holding)text='对方还在过自己的日子。去跟别人聊几句、滑一张卡、换个页面，或过几分钟再回来。';
    else list=[...socialChoices(s,r),...(!n.socialPending?randomChoices(r):[])];
    if(!list.length&&n.phase==='idle')text=n.completed.length>=3?'最近聊到这里，之后有空再联系。':'这件事先放一放，可以先聊别的。';
   }
