@@ -11370,7 +11370,7 @@ function mountGame({notify,onMenu}){
   const p=s.deck[0];
   return `<div class="discover-layout">${p?`<article class="profile-card" id="profile-card" data-profile-id="${p.id}"><div class="swipe-stamps" aria-hidden="true"><span class="stamp-pass">跳过</span><span class="stamp-like">喜欢</span></div>
   ${photoGallery(p)}
-  <div class="profile-body"><div class="profile-name"><h2>${e(p.name)} <small>${p.age}</small></h2><span>${e(p.km)} km</span></div><p class="profile-meta">${e(p.job)} · ${e(p.district)}</p><p class="profile-bio">${e(p.bio)}</p><div class="tags">${p.interests.map(t=>`<span>${e(t)}</span>`).join('')}</div></div>
+  <div class="profile-body"><div class="profile-name"><h2>${e(p.name)} <small>${p.age}</small></h2><span>${e(p.km)} km</span></div><p class="profile-meta">${e(p.job)} · ${e(p.district)}</p><div class="profile-scroll"><p class="profile-bio">${e(p.bio)}</p><div class="tags">${p.interests.map(t=>`<span>${e(t)}</span>`).join('')}</div></div></div>
   </article><div class="swipe-actions">${button('pass','×','pass-button')}${button('like','♡','like-button')}</div>`:empty(s.dailyUsed>=20?'今天已看完 20 位':'暂时没有新的对象','明天再来看看')}</div>`;
 
  }
@@ -11458,7 +11458,7 @@ function mountGame({notify,onMenu}){
    let start;
    const actions=host.querySelector('.swipe-actions');
    const resetDrag=()=>{delete actions.dataset.direction;card.style.transform='';card.style.setProperty('--drag-like','0');card.style.setProperty('--drag-pass','0');};
-   card.addEventListener('pointerdown',ev=>{if(swipeBusy||ev.target.closest('button')||ev.button>0)return;start={x:ev.clientX,y:ev.clientY};card.setPointerCapture?.(ev.pointerId);});
+   card.addEventListener('pointerdown',ev=>{if(swipeBusy||ev.target.closest('button, .profile-scroll, .profile-bio')||ev.button>0)return;start={x:ev.clientX,y:ev.clientY};card.setPointerCapture?.(ev.pointerId);});
    card.addEventListener('pointermove',ev=>{if(!start)return;const dx=ev.clientX-start.x,dy=ev.clientY-start.y;if(Math.abs(dy)>Math.abs(dx)+20){start=null;resetDrag();return;}actions.dataset.direction=Math.abs(dx)>12?(dx>0?'like':'pass'):'';card.style.transform=`translateX(${dx}px) rotate(${dx/20}deg)`;card.style.setProperty('--drag-like',String(Math.min(1,Math.max(0,dx/90))));card.style.setProperty('--drag-pass',String(Math.min(1,Math.max(0,-dx/90))));});
    card.addEventListener('pointerup',ev=>{if(!start)return;const dx=ev.clientX-start.x,dy=ev.clientY-start.y;start=null;if(Math.abs(dx)>70&&Math.abs(dy)<80)swipe(dx>0);else resetDrag();});
    card.addEventListener('pointercancel',()=>{start=null;resetDrag();});
