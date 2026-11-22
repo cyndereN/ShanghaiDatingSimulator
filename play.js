@@ -11441,6 +11441,8 @@ function mountGame({notify,onMenu}){
   const pageAtBottom=previousContent&&previousContent.scrollHeight-previousContent.clientHeight-previousPageScroll<=1;
   const previousHistory=host.querySelector('.chat-history');
   const previousScroll=previousHistory?.scrollTop||0;
+  const previousProfileId=host.querySelector('#profile-card')?.dataset.profileId;
+  const previousBioScroll=host.querySelector('.profile-scroll')?.scrollTop||0;
   const follow=!sameView||!previousHistory||previousHistory.scrollHeight-previousScroll-previousHistory.clientHeight<=1;
   host.classList.toggle('large-text',s.textSize==='large');
   const nav=[['discover','✳','发现'],['likes','♡','喜欢我的'],['messages','▤','消息'],['settings','☷','设置']];
@@ -11454,10 +11456,19 @@ function mountGame({notify,onMenu}){
   if(sameLayout&&previousContent)content.scrollTop=pageAtBottom&&follow?content.scrollHeight:previousPageScroll;
   renderedView=view;renderedProfileOpen=profileOpen;
   queueDelivery();
+  const bioScroll=host.querySelector('.profile-scroll');
+  if(bioScroll&&card?.dataset.profileId===previousProfileId)bioScroll.scrollTop=previousBioScroll;
   if(card){
    let start;
    const actions=host.querySelector('.swipe-actions');
    const resetDrag=()=>{delete actions.dataset.direction;card.style.transform='';card.style.setProperty('--drag-like','0');card.style.setProperty('--drag-pass','0');};
+   if(bioScroll){
+    let drag;
+    bioScroll.addEventListener('pointerdown',ev=>{if(swipeBusy||ev.button>0||ev.target.closest('button'))return;drag={y:ev.clientY,top:bioScroll.scrollTop,id:ev.pointerId};try{bioScroll.setPointerCapture(ev.pointerId);}catch{}});
+    bioScroll.addEventListener('pointermove',ev=>{if(!drag||ev.pointerId!==drag.id)return;bioScroll.scrollTop=drag.top-(ev.clientY-drag.y);});
+    bioScroll.addEventListener('pointerup',ev=>{if(drag?.id===ev.pointerId)drag=null;});
+    bioScroll.addEventListener('pointercancel',()=>{drag=null;});
+   }
    card.addEventListener('pointerdown',ev=>{if(swipeBusy||ev.target.closest('button, .profile-scroll, .profile-bio')||ev.button>0)return;start={x:ev.clientX,y:ev.clientY};card.setPointerCapture?.(ev.pointerId);});
    card.addEventListener('pointermove',ev=>{if(!start)return;const dx=ev.clientX-start.x,dy=ev.clientY-start.y;if(Math.abs(dy)>Math.abs(dx)+20){start=null;resetDrag();return;}actions.dataset.direction=Math.abs(dx)>12?(dx>0?'like':'pass'):'';card.style.transform=`translateX(${dx}px) rotate(${dx/20}deg)`;card.style.setProperty('--drag-like',String(Math.min(1,Math.max(0,dx/90))));card.style.setProperty('--drag-pass',String(Math.min(1,Math.max(0,-dx/90))));});
    card.addEventListener('pointerup',ev=>{if(!start)return;const dx=ev.clientX-start.x,dy=ev.clientY-start.y;start=null;if(Math.abs(dx)>70&&Math.abs(dy)<80)swipe(dx>0);else resetDrag();});
@@ -11491,7 +11502,7 @@ function mountGame({notify,onMenu}){
   if(a==='cc'){active=cc.id;archivedId=null;tab='messages';profileOpen=false;render();host.querySelector('.chat-top h1')?.focus({preventScroll:true});return;}
   if(a.startsWith('archive-chat:')){const id=a.slice(13);if(!s.archives.some(r=>r.profile.id===id))return;active=null;archivedId=id;tab='archive';profileOpen=false;render();host.querySelector('.chat-top h1')?.focus({preventScroll:true});return;}
   if(a.startsWith('chat:'))return openChat(a.slice(5));
-  if(a==='photo-prev'||a==='photo-next'){const p=archivedId?currentArchive()?.profile:active?current()?.profile:s.deck[0];if(p?.photos?.length){photoIndex[p.id]=((photoIndex[p.id]||0)+(a==='photo-next'?1:-1)+p.photos.length)%p.photos.length;render();}return;}
+  if(a==='photo-prev'||a==='photo-next'){const p=archivedId?currentArchive()?.profile:active?current()?.profile:s.deck[0];if(p?.photos?.length){photoIndex[p.id]=((photoIndex[p.id]||0)+(a==='photo-next'?1:-1)+p.photos.length)%p.photos.length;const index=photoIndex[p.id],photo=p.photos[index];host.querySelectorAll('.profile-gallery').forEach(gallery=>{const backdrop=gallery.querySelector('.gallery-backdrop'),img=gallery.querySelector('.gallery-photo');if(backdrop)backdrop.src=photo.src;if(img){img.src=photo.src;img.alt=`${p.name}的第${index+1}张照片`;}const count=gallery.querySelector('.photo-count');if(count)count.textContent=`${index+1} / ${p.photos.length}`;gallery.querySelectorAll('.photo-dots i').forEach((dot,i)=>dot.classList.toggle('on',i===index));});}return;}
   if(a==='vip'){host.querySelector('#vip-dialog').showModal();return;}
   if(a==='vip-close'){host.querySelector('#vip-dialog').close();return;}
   if(a==='vip-info'){notify('VIP 暂未开放，当前不会收费。');return;}
