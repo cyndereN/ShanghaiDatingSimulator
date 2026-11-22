@@ -10496,10 +10496,18 @@ function claimBio(p,text){
  p.bio=text;p.bioLock=id;markDialogue(id);return true;
 }
 function isMajorProfile(p){return !!(p&&(p.major||String(p.id||'').startsWith('CHAR_')));}
+function shortBioWeight(line){return /no ons/i.test(line)?0.25:1;}
 function freshShortBio(p){
  const hobby=p.interests?.[0]||'吃饭',district=p.district||'上海';
  const lines=SHORT_BIOS.map(t=>t.replaceAll('{hobby}',hobby).replaceAll('{district}',district).replaceAll('{job}',p.job||'上班'));
- return lines[Math.floor(Math.random()*lines.length)];
+ let total=0;
+ for(const line of lines)total+=shortBioWeight(line);
+ let roll=Math.random()*total;
+ for(const line of lines){
+  roll-=shortBioWeight(line);
+  if(roll<=0)return line;
+ }
+ return lines[lines.length-1];
 }
 function ensureUniqueBio(p){
  if(!p)return false;
