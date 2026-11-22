@@ -10551,6 +10551,10 @@ function storyLine(text, name) {
  return {type:dialogue?'message':'narration',text:dialogue?value.slice(colon+1).trim():value};
 }
 
+function keepChatEntry(m){
+ if(m.who==='you'||m.type!=='narration')return true;
+ return /^(你们匹配了|对方看过了|刚才没碰上|刚才没有等到你)/.test(m.text);
+}
 function chatEntries(r) {
  return r.history.flatMap((m,index)=>{
   if(m.who==='you')return [{who:'you',type:'message',text:m.text}];
@@ -10561,7 +10565,7 @@ function chatEntries(r) {
    const legacyMessage=!m.type&&((index===0&&m.text===r.profile.person?.line)||r.narrative?.kind==='featured');
    return {...parsed,who:'them',type:m.type|| (legacyMessage?'message':parsed.type)};
   });
- });
+ }).filter(keepChatEntry);
 }
 
 const deliveryDelay=entry=>Math.min(2000,650+Array.from(entry.text).length*25);
@@ -10572,7 +10576,20 @@ const mainline=content.mainline;
 const authoredProfiles=content.profiles;
 const kind=p=>p.id==='CHAR_001'?'mainline':p.major?'featured':'background';
 const say=(r,text,who='them',type='message')=>{if(text)r.history.push({who,text,type});};
-const storySay=(r,text)=>{for(const line of text.split('\n').filter(t=>t.trim())){const entry=storyLine(line,r.profile.name);say(r,line,'them',entry.type);}};
+function dialogueLines(r,list,raw=false){
+ const fill=raw?t=>String(t??''):r.narrative?.kind==='featured'?t=>rushFill(r,t):t=>fillPerson(t,r.profile);
+ const out=[];
+ for(const item of list||[]){
+  for(const line of String(fill(item)).split('\n')){
+   const value=line.trim();
+   if(!value||/\{[a-zA-Z][^}]*\}/.test(value))continue;
+   if(storyLine(value,r.profile?.name).type!=='message')continue;
+   out.push(value);
+  }
+ }
+ return out;
+}
+const storySay=(r,text)=>{for(const line of dialogueLines(r,[text]))say(r,line,'them','message');};
 const lines=(r,list)=>{for(const t of list||[])say(r,t);};
 const weighted=(pairs,value)=>{const sum=pairs.reduce((n,[,w])=>n+w,0);let n=value*sum;return pairs.find(([,w])=>(n-=w)<0)?.[0]??pairs.at(-1)?.[0];};
 function randomValue(n){n.rngState=(Math.imul(n.rngState,1664525)+1013904223)>>>0;return n.rngState/4294967296;}
@@ -10769,18 +10786,14 @@ function lifeChoicesOf(r,ev){
 }
 function currentLifeEvent(r){return lifeEvents().find(ev=>ev.id===r.narrative.life?.event)||null;}
 function laterDays(min=1,max=3){return (min+Math.floor(Math.random()*(max-min+1)))*DAY;}
-function storyLinesOf(r,lines){
- const fill=r.narrative?.kind==='featured'?t=>rushFill(r,t):t=>fillPerson(t,r.profile);
- return (lines||[]).flatMap(line=>String(fill(line)).split('\n')).map(t=>t.trim()).filter(Boolean);
-}
 function dripStory(r,lines,raw=false){
  const n=r.narrative;if(!n)return;
- const filled=raw?(lines||[]).flatMap(line=>String(line).split('\n')).map(t=>t.trim()).filter(Boolean):storyLinesOf(r,lines);
- if(!filled.length)return;
+ const spoken=dialogueLines(r,lines,raw);
+ if(!spoken.length)return;
  n.lineQueue=n.lineQueue||[];
- const nowCount=Math.min(filled.length,1+Math.floor(Math.random()*2));
- for(const line of filled.slice(0,nowCount))storySay(r,line);
- const rest=filled.slice(nowCount);
+ const nowCount=Math.min(spoken.length,1+Math.floor(Math.random()*2));
+ for(const line of spoken.slice(0,nowCount))say(r,line,'them','message');
+ const rest=spoken.slice(nowCount);
  if(rest.length){n.lineQueue.push(...rest);n.lineDueAt=Date.now()+laterDays();}
 }
 function storyWaiting(n){return !!(n&&(n.lineQueue?.length||n.afterQueue));}
@@ -10788,7 +10801,7 @@ function maybeGhost(r){return !isMajorProfile(r.profile)&&Math.random()<NO_REPLY
 function ghostReply(r){
  const n=r.narrative;
  n.ghosted=true;n.lineQueue=[];n.lineDueAt=0;n.afterQueue=null;n.holding=false;n.pendingChoice=null;
- storySay(r,'对方看过了，没有再回。');
+ say(r,'对方看过了，没有再回。','them','narration');
  n.phase='quiet';
 }
 function presentLife(r,ev){
@@ -10812,10 +10825,12 @@ function pumpStory(r,now=Date.now()){
  const n=r.narrative;if(!n||n.ghosted||n.phase==='quiet'||n.phase==='archive')return false;
  let changed=false;
  if(n.lineQueue?.length&&now>=(n.lineDueAt||0)){
-  const batch=n.lineQueue.splice(0,1+Math.floor(Math.random()*2));
-  for(const line of batch)storySay(r,line);
+  const want=1+Math.floor(Math.random()*2);
+  const spoken=[];
+  while(n.lineQueue.length&&spoken.length<want)spoken.push(...dialogueLines(r,[n.lineQueue.shift()]));
+  for(const line of spoken)say(r,line,'them','message');
   n.lineDueAt=n.lineQueue.length?now+laterDays():(n.afterQueue?now+laterDays(1,2):0);
-  r.unread=true;changed=true;
+  r.unread=spoken.length>0;changed=true;
  }
  if(!n.lineQueue?.length&&n.afterQueue&&now>=(n.lineDueAt||0)){
   const job=n.afterQueue;n.afterQueue=null;n.lineDueAt=0;
