@@ -10374,6 +10374,34 @@ const storyContent = {
 
 // Content is maintained in the character workbook and imported as JSON.
 const ARC_WAIT = 3 * 60 * 1000;
+const MATCH_CHANCE = 0.4;
+const QUIET_CHANCE = 0.22;
+const QUIET_LINES = [
+ {id:'quiet:hi',text:'你们匹配了。有人发了句 hi，之后就没下文。'},
+ {id:'quiet:step',text:'你们匹配了。谁也不敢迈出第一步。'},
+ {id:'quiet:read',text:'你们匹配了。消息停在已读，没有人再接下一句。'},
+ {id:'quiet:dark',text:'你们匹配了。对话框亮了一下，又暗回去。'}
+];
+let heardDialogues=null;
+function bindHeard(state){if(!Array.isArray(state.heard))state.heard=[];heardDialogues=state.heard;}
+function dialogueHeard(id){return !!id&&!!heardDialogues?.includes(id);}
+function markDialogue(id){if(id&&heardDialogues&&!heardDialogues.includes(id))heardDialogues.push(id);}
+function takeQuiet(r){
+ const line=QUIET_LINES.find(item=>!dialogueHeard(item.id));
+ if(!line||!r.narrative)return false;
+ markDialogue(line.id);
+ say(r,line.text,'them','narration');
+ r.narrative.phase='quiet';r.narrative.delivered=true;r.narrative.holding=false;r.narrative.active=null;
+ r.chatRevealedCount=chatEntries(r).length;
+ return true;
+}
+function beginQuiet(r){
+ if(r.narrative?.phase==='quiet')return true;
+ if(r.narrative?.life?.event)return false;
+ if(takeQuiet(r))return true;
+ if(r.narrative){r.narrative.phase='archive';r.narrative.holding=false;}
+ return false;
+}
 const ordinaryArcs = storyContent.arcs;
 
 function hashId(id = '') {
@@ -10577,8 +10605,19 @@ function lifeEvents(){
  return list;
 }
 function lifeStoryTalent(life){return life.talents.includes('featured')?'featured':life.talents[0];}
+function echoKey(life){
+ if(life.SPR<=3)return 'echo:unsure';
+ if(life.MNY<=2)return 'echo:tight';
+ if(life.MNY>=7)return 'echo:money';
+ if(life.STR>=7)return 'echo:fast';
+ if(life.INT<=2)return 'echo:missed';
+ return 'echo:reread';
+}
 function lifeEligible(life,ev){
  if(ev.noRandom||!life.talents.includes(ev.talent))return false;
+ if(dialogueHeard(ev.id))return false;
+ if(ev.echo&&dialogueHeard(echoKey(life)))return false;
+ if(ev.cold&&dialogueHeard('cold:heart'))return false;
  if(ev.exclude&&lifeCond(life,ev.exclude))return false;
  if(ev.include)return lifeCond(life,ev.include);
  return true;
@@ -10603,13 +10642,13 @@ function pickLife(r){
   return [ev,weight];
  });
  if(ranked.length)return weighted(ranked,randomValue(r.narrative));
- const next=lifeEvents().find(ev=>ev.talent===talent&&!ev.noRandom&&ev.index===step+1&&!life.seen.includes(ev.id));
+ const next=lifeEvents().find(ev=>ev.talent===talent&&!ev.noRandom&&ev.index===step+1&&!life.seen.includes(ev.id)&&!dialogueHeard(ev.id));
  return next||null;
 }
 function lifeBranch(r){
  const life=r.narrative.life;
  const talent=lifeStoryTalent(life);
- if(life.SPR<=1&&!life.seen.includes(`${talent}#cold`))return lifeEvents().find(ev=>ev.id===`${talent}#cold`)||null;
+ if(life.SPR<=1&&!life.seen.includes(`${talent}#cold`)&&!dialogueHeard('cold:heart'))return lifeEvents().find(ev=>ev.id===`${talent}#cold`)||null;
  return null;
 }
 function seedLife(r){
@@ -10617,7 +10656,12 @@ function seedLife(r){
  const money={tight:2,comfortable:5,abundant:8}[p.resourceTier]??4;
  const persona={P01:{INT:3,STR:4,SPR:4},P02:{INT:5,STR:2,SPR:6},P03:{INT:4,STR:5,SPR:5}}[p.storyPersonality]||{INT:4,STR:4,SPR:5};
  const jitter=shift=>((h>>>shift)%3)-1;
- const arc=n.kind==='featured'?'featured':(p.storyArc||arcForId(p.sourceProfileId||p.id));
+ let arc=n.kind==='featured'?'featured':(p.storyArc||arcForId(p.sourceProfileId||p.id));
+ if(n.kind==='background'){
+  const open=ordinaryArcs.map(item=>item.id).filter(id=>!dialogueHeard(`${id}#0`));
+  if(!open.includes(arc))arc=open.length?open[Math.floor(Math.random()*open.length)]:arc;
+  n.noDialogue=!open.length;
+ }
  const talents=n.kind==='featured'?['featured']:[arc];
  if(p.id==='CHAR_003')talents.push('CHAR_003');
  if(n.kind==='background')n.arcId=arc;
@@ -10659,6 +10703,9 @@ function presentLife(r,ev){
  const n=r.narrative,life=n.life;
  life.event=ev.id;
  if(!life.seen.includes(ev.id))life.seen.push(ev.id);
+ markDialogue(ev.id);
+ if(ev.echo)markDialogue(echoKey(life));
+ if(ev.cold)markDialogue('cold:heart');
  if(ev.index>=0)n.beat=ev.index;
  if(n.kind==='background')n.phase='arc';
  if(n.kind==='featured'){n.phase='rush';n.rushIntro=true;}
@@ -10758,12 +10805,13 @@ function currentArc(r){
 }
 function npcUnmatchAllowed(profile){return kind(profile)==='background';}
 function ensureArc(r){
- const n=r.narrative;if(!n||n.kind!=='background'||n.phase==='archive'||n.socialPaused)return;
+ const n=r.narrative;if(!n||n.kind!=='background'||n.phase==='archive'||n.phase==='quiet'||n.socialPaused)return;
  if(!n.life&&!(r.history||[]).length)seedLife(r);
  if(n.life){
   if(n.phase!=='arc'){n.phase='arc';if(!n.delivered)n.holding=false;}
   if(n.holding||n.delivered)return;
-  const ev=pickLife(r);if(!ev){n.phase='archive';return;}
+  const ev=!n.noDialogue&&pickLife(r);
+  if(!ev){if(!n.life.event)beginQuiet(r);else n.phase='archive';return;}
   presentLife(r,ev);return;
  }
  if(n.phase!=='arc'){n.phase='arc';if(!n.delivered){n.beat=0;n.holding=false;}}
@@ -10849,13 +10897,13 @@ function releaseArcs(state,now=Date.now()){
  return changed;
 }
 function ensureRush(r){
- const n=r.narrative;if(!n||n.kind==='mainline'||n.phase==='archive'||n.socialPaused)return;
+ const n=r.narrative;if(!n||n.kind==='mainline'||n.phase==='archive'||n.phase==='quiet'||n.socialPaused)return;
  if(n.kind==='background'){ensureArc(r);return;}
  if(!n.life&&!(r.history||[]).length)seedLife(r);
  if(n.life){
   if(n.phase!=='rush'){n.phase='rush';n.beat=0;n.active=null;}
   if(n.holding||n.delivered)return;
-  const ev=pickLife(r);if(!ev){n.phase='archive';return;}
+  const ev=pickLife(r);if(!ev){if(!n.life.event)beginQuiet(r);else n.phase='archive';return;}
   presentLife(r,ev);return;
  }
  if(n.phase!=='rush'){n.phase='rush';n.beat=0;n.active=null;}
@@ -11073,7 +11121,7 @@ function actSocial(state,r,action,now=Date.now()){
 function validNarrative(r){
  const n=r.narrative;if(!n)return true;
  if(n.version!==1||n.kind!==kind(r.profile)||!Number.isFinite(n.started)||!Number.isInteger(n.session)||!Number.isInteger(n.rngState)||!Array.isArray(n.completed)||!Array.isArray(n.callbacks)||!n.deferred)return false;
- if(n.phase==='archive')return true;
+ if(n.phase==='archive'||n.phase==='quiet')return true;
  if(n.kind==='mainline')return n.phase==='main'&&mainNodes.has(n.node)&&Number.isFinite(n.dueAt)&&Array.isArray(n.completedNodes)&&n.flags&&n.facts&&Number.isInteger(n.gateStep??0)&&(!n.appointment||Number.isFinite(n.appointment.at));
  if(n.phase==='rush')return Number.isInteger(n.beat)&&n.beat>=0&&n.beat<rushBeats.length;
  if(n.phase==='arc'){const story=arcById(n.arcId);return n.kind==='background'&&!!story&&Number.isInteger(n.beat)&&n.beat>=0&&n.beat<story.chapters.length;}
@@ -11112,7 +11160,7 @@ function profile(serial,template=pick(authoredProfiles)) {
  const fruit=profileFruit(template);
  return applyOrdinaryArt({id:`p${serial}`,kind:'background',storyPersonality,sourceProfileId:template.profile_id,portraitId:template.art_id,fruit,person,
  district,km:(1+Math.random()*12).toFixed(1),style:Math.floor(Math.random()*3),
- wantsMatch:Math.random()<.82,delay:8000+Math.floor(Math.random()*12000),name:template.nickname,age:template.age,job:template.job,interests:template.hobbies,bio:dressed.bio,question:dressed.question,answer:dressed.answer,boundary:dressed.boundary,storyArc:dressed.arcId,resourceTier:template.resource_tier,lifeFacts:template.life_facts,opener:'',openerDelivery:'none',expressionStyle:template.expression_style_id});
+ wantsMatch:Math.random()<MATCH_CHANCE,delay:8000+Math.floor(Math.random()*12000),name:template.nickname,age:template.age,job:template.job,interests:template.hobbies,bio:dressed.bio,question:dressed.question,answer:dressed.answer,boundary:dressed.boundary,storyArc:dressed.arcId,resourceTier:template.resource_tier,lifeFacts:template.life_facts,opener:'',openerDelivery:'none',expressionStyle:template.expression_style_id});
 }
 const majorProfiles=()=>main.characters.map((p,i)=>({...p,major:true,kind:p.id==='CHAR_001'?'mainline':'featured',storyPersonality:['P01','P02','P03'][i],person:personalities[i],district:'上海',km:'3.0',style:i,wantsMatch:true,delay:10000}));
 const dayKey=(now=Date.now())=>{const d=new Date(now);return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;};
@@ -11141,7 +11189,7 @@ function dailyDeck(s,now){
  s.discoveryDay=dayKey(now);s.dailyUsed=0;
 }
 function fresh(now=Date.now()) {
- const state={version:1,likePolicy:2,serial:7,created:now,nextLikeAt:now+90000,likes:0,likeCursor:0,incoming:[],catalog:{},retired:[],deck:[],pending:[],matches:[],archives:[],skipped:[],endings:[],preferences:[],textSize:'normal'};
+ const state={version:1,likePolicy:2,matchRate:2,serial:7,created:now,nextLikeAt:now+90000,likes:0,likeCursor:0,incoming:[],catalog:{},retired:[],heard:[],deck:[],pending:[],matches:[],archives:[],skipped:[],endings:[],preferences:[],textSize:'normal'};
  dailyDeck(state,now);
  return state;
 }
@@ -11149,7 +11197,9 @@ function relation(p,now=Date.now()) {
  const opening=p.sourceProfileId?'':(p.id==='CHAR_001'?'':p.person?.line||'');
  const r={profile:p,stage:'encounter',step:0,seen:[],flags:{},history:opening?[{who:'them',text:opening}]:[],node:'intro',event:null,read:0,unread:false,appointment:null,created:now};
  initializeNarrative(r,now);
+ if(kind(p)==='background'&&Math.random()<QUIET_CHANCE&&takeQuiet(r)){r.unread=true;return r;}
  if(p.sourceProfileId)seedArc(r);
+ if(kind(p)==='background'&&r.narrative.phase!=='arc'&&r.narrative.phase!=='quiet'&&!takeQuiet(r))return null;
  r.unread=p.id!=='CHAR_001'&&r.history.length>0;
  return r;
 }
@@ -11173,7 +11223,7 @@ function tick(state,now=Date.now()) {
  const cursor=state.likeCursor||0,available=availableTemplates(state).filter(t=>!state.incoming.some(p=>p.sourceProfileId===t.profile_id));const p=cursor<3?majorProfiles()[cursor]:available.length?catalogProfile(state,pick(available)):null;state.likeCursor=cursor+1;
  if(p&&!state.matches.some(r=>r.profile.id===p.id)&&!(state.retired||[]).includes(p.id)&&!state.incoming.some(x=>x.id===p.id))state.incoming.push(p);
  state.likes=state.incoming.length;state.nextLikeAt=now+90000;changed=true;}
- state.pending=state.pending.filter(p=>{if(p.readyAt>now)return true;if(p.wantsMatch&&!state.matches.some(r=>r.profile.id===p.id))state.matches.push(relation(p,now));changed=true;return false;});
+ state.pending=state.pending.filter(p=>{if(p.readyAt>now)return true;if(p.wantsMatch&&!state.matches.some(r=>r.profile.id===p.id)){const rel=relation(p,now);if(rel)state.matches.push(rel);}changed=true;return false;});
  for(const r of state.matches){if(updateNarrative(r,now))changed=true;}
  if(releaseArcs(state,now))changed=true;
  const matched=new Set(state.matches.map(r=>r.profile.id)),matchedSources=new Set(state.matches.map(r=>r.profile.sourceProfileId).filter(Boolean));
@@ -11217,6 +11267,23 @@ function load(storage) {
   p.portraitId=template.art_id;applyOrdinaryArt(p);
   const dressed=dressProfile(template,p.district||'上海');
   p.job=template.job;p.bio=dressed.bio;p.boundary=dressed.boundary;p.question=dressed.question;p.answer=dressed.answer;p.storyArc=dressed.arcId;p.opener='';p.openerDelivery='none';
+ }
+ if(!Array.isArray(s.heard)){
+  s.heard=[];
+  for(const r of [...s.matches,...s.archives])for(const id of r.narrative?.life?.seen||[])if(!s.heard.includes(id))s.heard.push(id);
+ }
+ if(s.matchRate!==2){
+  s.matchRate=2;
+  const pending=new Set(s.pending.map(p=>p.id));
+  for(const p of Object.values(s.catalog)){
+   if(!p?.sourceProfileId||pending.has(p.id))continue;
+   p.wantsMatch=Math.random()<MATCH_CHANCE;
+  }
+  for(const p of [...s.deck,...s.incoming,...s.skipped]){
+   if(!p.sourceProfileId||pending.has(p.id))continue;
+   const saved=s.catalog[p.sourceProfileId];
+   if(saved)p.wantsMatch=saved.wantsMatch;
+  }
  }
  for(const r of s.matches)initializeNarrative(r);
  s.likes=s.incoming.length;
@@ -11297,6 +11364,7 @@ function fruitArt(p,small=false){
 function mountGame({notify,onMenu}){
  const host=document.querySelector('#game-screen');
  let s; try{s=load(localStorage)||fresh();}catch{s=fresh();}
+ bindHeard(s);
  if(!s.incoming)s.incoming=Array.from({length:s.likes},()=>profile(s.serial++));
  const photoIndex={};
  let tab='discover',active=null,archivedId=null,confirmAction=null,storageWarned=false,profileOpen=false,swipeBusy=false;
@@ -11358,7 +11426,7 @@ function mountGame({notify,onMenu}){
  }
  function row(r,archived=false){
   const entries=chatEntries(r),count=archived?r.chatRevealedCount:visibleCount(r);
-  const preview=entries.slice(0,count).findLast(m=>m.type==='message')?.text||(archived?'暂无聊天记录':entries.find(m=>m.type==='message')?.text||'暂无消息');
+  const preview=entries.slice(0,count).findLast(m=>m.type==='message'||(!archived&&r.narrative?.phase==='quiet'&&m.type==='narration'))?.text||(archived?'暂无聊天记录':entries.find(m=>m.type==='message')?.text||'暂无消息');
   return button(`${archived?'archive-chat':'chat'}:${r.profile.id}`,`<span class="avatar" style="--tint:${tint(r.profile.fruit)}">${fruitArt(r.profile,true)}</span><span class="row-copy"><strong>${e(r.profile.name)}${!archived&&r.unread?'<i class="unread-dot" aria-label="未读"></i>':''}</strong><span>${e(preview)}</span>${archived?`<small>解除于 ${e(dateLabel(r.archivedAt))}</small>`:''}</span>`,'connection-row');
  }
  function tint(f){return ({peach:'#efc9b9',lemon:'#eee5b1',pear:'#dce1c0',apple:'#e7bdaf',grape:'#dbd2e5',banana:'#eee1b5',durian:'#dce1b5',orange:'#ffe0b2',pomelo:'#e3edc2'})[f];}
@@ -11391,6 +11459,7 @@ function mountGame({notify,onMenu}){
  function choices(r){
   const n=r.narrative;
   if(n.phase==='archive')return endingCard(r);
+  if(n.phase==='quiet')return `<div class="chapter-note">这段匹配没有往下聊。</div>${button('messages','回到消息','text-button')}`;
   let text='',list=[];
   if(n.kind==='mainline'){
    presentMain(r);recordEndings();save();
@@ -11519,7 +11588,7 @@ function mountGame({notify,onMenu}){
   if(a==='resume-chat'){const r=current();if(r?.narrative.socialPaused){r.narrative.socialPaused=false;save();render();}return;}
   if(a==='profile'){profileOpen=!profileOpen;render();return;}
   if(a==='unmatch'){if(!current())return;return confirm('解除后不会再收到对方的消息。聊天记录和资料会保留在「设置 → Archive」中。',()=>{const r=current();if(!r)return;visibleCount(r);archiveRelation(s,active);active=null;profileOpen=false;save();render();});}
-  if(a==='reset')return confirm('这会删除当前浏览器里的全部进度、结局和 Archive 记录，并返回 Logo 页面，无法撤销。',()=>{s=fresh();active=null;archivedId=null;tab='discover';profileOpen=false;save();render();onMenu();document.querySelector('#app-logo')?.focus({preventScroll:true});});
+  if(a==='reset')return confirm('这会删除当前浏览器里的全部进度、结局和 Archive 记录，并返回 Logo 页面，无法撤销。',()=>{s=fresh();bindHeard(s);active=null;archivedId=null;tab='discover';profileOpen=false;save();render();onMenu();document.querySelector('#app-logo')?.focus({preventScroll:true});});
   if(a==='cancel-confirm'){confirmAction=null;host.querySelector('#game-confirm').close();queueDelivery();return;}
   if(a==='accept-confirm'){const fn=confirmAction;confirmAction=null;host.querySelector('#game-confirm').close();fn?.();return;}
   if(a.startsWith('font:')){s.textSize=a.slice(5);save();render();return;}
