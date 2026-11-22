@@ -11461,7 +11461,7 @@ function mountGame({notify,onMenu}){
   if(card){
    let start;
    const actions=host.querySelector('.swipe-actions');
-   const resetDrag=()=>{delete actions.dataset.direction;card.style.transform='';card.style.setProperty('--drag-like','0');card.style.setProperty('--drag-pass','0');};
+   const resetDrag=()=>{delete actions.dataset.direction;delete actions.dataset.dragging;card.style.transform='';card.style.setProperty('--drag-like','0');card.style.setProperty('--drag-pass','0');actions.style.setProperty('--lift','0');};
    if(bioScroll){
     let drag;
     bioScroll.addEventListener('pointerdown',ev=>{if(swipeBusy||ev.button>0||ev.target.closest('button'))return;drag={y:ev.clientY,top:bioScroll.scrollTop,id:ev.pointerId};try{bioScroll.setPointerCapture(ev.pointerId);}catch{}});
@@ -11469,11 +11469,18 @@ function mountGame({notify,onMenu}){
     bioScroll.addEventListener('pointerup',ev=>{if(drag?.id===ev.pointerId)drag=null;});
     bioScroll.addEventListener('pointercancel',()=>{drag=null;});
    }
-   card.addEventListener('pointerdown',ev=>{if(swipeBusy||ev.target.closest('button, .profile-scroll, .profile-bio')||ev.button>0)return;start={x:ev.clientX,y:ev.clientY};card.setPointerCapture?.(ev.pointerId);});
-   card.addEventListener('pointermove',ev=>{if(!start)return;const dx=ev.clientX-start.x,dy=ev.clientY-start.y;if(Math.abs(dy)>Math.abs(dx)+20){start=null;resetDrag();return;}actions.dataset.direction=Math.abs(dx)>12?(dx>0?'like':'pass'):'';card.style.transform=`translateX(${dx}px) rotate(${dx/20}deg)`;card.style.setProperty('--drag-like',String(Math.min(1,Math.max(0,dx/90))));card.style.setProperty('--drag-pass',String(Math.min(1,Math.max(0,-dx/90))));});
+   card.addEventListener('pointerdown',ev=>{if(swipeBusy||ev.target.closest('button, .profile-scroll, .profile-bio')||ev.button>0)return;start={x:ev.clientX,y:ev.clientY};actions.dataset.dragging='1';card.setPointerCapture?.(ev.pointerId);});
+   card.addEventListener('pointermove',ev=>{if(!start)return;const dx=ev.clientX-start.x,dy=ev.clientY-start.y;if(Math.abs(dy)>Math.abs(dx)+20){start=null;resetDrag();return;}actions.dataset.direction=Math.abs(dx)>12?(dx>0?'like':'pass'):'';card.style.transform=`translateX(${dx}px) rotate(${dx/20}deg)`;const like=Math.min(1,Math.max(0,dx/90)),pass=Math.min(1,Math.max(0,-dx/90));card.style.setProperty('--drag-like',String(like));card.style.setProperty('--drag-pass',String(pass));actions.style.setProperty('--lift',String(Math.max(like,pass)));});
    card.addEventListener('pointerup',ev=>{if(!start)return;const dx=ev.clientX-start.x,dy=ev.clientY-start.y;start=null;if(Math.abs(dx)>70&&Math.abs(dy)<80)swipe(dx>0);else resetDrag();});
    card.addEventListener('pointercancel',()=>{start=null;resetDrag();});
+   placeSwipeActions();
   }
+ }
+ function placeSwipeActions(){
+  const actions=host.querySelector('.swipe-actions'),nav=host.querySelector('.game-sidebar nav'),card=host.querySelector('#profile-card');
+  if(!actions||!nav||!card)return;
+  const gap=nav.getBoundingClientRect().top-card.getBoundingClientRect().bottom;
+  actions.style.setProperty('--tuck',`${Math.round(gap)}px`);
  }
  function navigate(next){s.lifeSeq=(s.lifeSeq||0)+1;releaseArcs(s);tab=next;active=null;archivedId=null;profileOpen=false;save();render();host.querySelector('.game-content')?.focus({preventScroll:true});window.scrollTo(0,0);}
  function openChat(id){
@@ -11484,7 +11491,7 @@ function mountGame({notify,onMenu}){
  async function swipe(like){
   if(swipeBusy||!s.deck.length)return;
   swipeBusy=true;
-  const actions=host.querySelector('.swipe-actions');if(actions)actions.dataset.direction=like?'like':'pass';
+  const actions=host.querySelector('.swipe-actions');if(actions){actions.dataset.direction=like?'like':'pass';delete actions.dataset.dragging;actions.style.setProperty('--lift','1');}
   const card=host.querySelector('#profile-card');
   if(card&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
    try{await card.animate([{transform:card.style.transform||'none',opacity:1},{transform:`translateX(${like?1:-1}40vw) rotate(${like?18:-18}deg)`,opacity:0}],{duration:180,easing:'ease-in',fill:'forwards'}).finished;}catch{}
@@ -11529,6 +11536,7 @@ function mountGame({notify,onMenu}){
  document.addEventListener('keydown',ev=>{if(host.hidden||active||tab!=='discover'||ev.target.closest('input,button,summary,dialog'))return;if(ev.key==='ArrowLeft'||ev.key==='ArrowRight'){ev.preventDefault();swipe(ev.key==='ArrowRight');}});
  setInterval(()=>{const changed=refresh();if(active&&!host.hidden){const open=s.matches.find(r=>r.profile.id===active);if(open)open.unread=false;}if(changed){save();if(!swipeBusy && !host.hidden && !host.querySelector('dialog[open]') && !host.querySelector('#date-time:focus'))render();}},1000);
  document.addEventListener('visibilitychange',()=>{if(document.hidden){queueDelivery();return;}s.lifeSeq=(s.lifeSeq||0)+1;if(refresh())save();if(!host.hidden)render();});
+ window.addEventListener('resize',()=>{if(!host.hidden)placeSwipeActions();});
  refresh();save();
  return {open(){tab='discover';active=null;archivedId=null;profileOpen=false;refresh();render();host.querySelector('.game-content')?.focus({preventScroll:true});}};
 }
