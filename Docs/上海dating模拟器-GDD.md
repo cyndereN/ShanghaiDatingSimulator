@@ -6,7 +6,7 @@
 
 **中文介绍：**在上海的交友软件里滑水果、同时谈几段——人是果，每次右滑也要结果。
 
-**状态：**网页可玩原型开发中。本文已并入 `Docs/decisions/` 全部决定，后定覆盖先定。已接入不等于文案或美术定稿。
+**状态：**网页可玩原型开发中。本文已并入 `Docs/decisions/` 全部决定，后定覆盖先定。已接入不等于文案或美术定稿。自 2026-11-25 起，第 12 节为英文续写，记录此后接到原型里的规则。
 
 ## 1. 游戏是什么
 
@@ -340,4 +340,135 @@ Base 上海、身高体重、偏好线下：
 4. 普通角色的快推按第 4.1 节补故事走向。跨线戏只写第 4.2 节那一次线下撞见。
 5. 柠檬／榴莲专属线本阶段不做。主要角色不主动解除；普通 ghosting 已写成故事结局，不把人移出列表。
 6. 每日滑卡上限与 VIP 按第 7 节落地。真实支付、账号、云存档、玩家自定义资料仍不做。
+
+## 12. English continuation (2026-11-25)
+
+This section continues the playable build after the 2026-11-04 decisions. Sections 1–11 still hold. Where a number below names a later rule, that later rule wins. Peach’s handwritten mainline, the consent gates, Archive, the unpaid VIP window, and the single offline cross-line leak are unchanged. The game’s interface and story copy stay in Chinese. This section is the design note for that build.
+
+The copy pass that feeds the current bios and chats is tagged `2026-11-21-date-folder-copy`. Its source is the screenshot folder `Date/`: profile pages and chat captures used as voice reference. Those files are source material. They are not shipped art, and they are not a claim about any real person. Lines land on adult fruit residents.
+
+### 12.1 The discovery card
+
+Discovery is one full-bleed card inside the same phone frame on desktop and on a phone. The frame is a narrow portrait column. The photo fills the card. A darkened band covers the bottom quarter and holds the name, age, distance, job, district, bio, and tags.
+
+The bio is longer than that band. The player drags inside the band to read the rest. That drag stays on the text. A sideways drag on the photo still swipes the card. Left is pass, right is like. The arrow keys do the same when focus is not in a control.
+
+The pass and like buttons are two round controls, × and ♡, floating on the card. At rest they sit low, half tucked under the bottom tab bar. While the card is dragged they rise with the swipe, and the stamps 跳过 and 喜欢 fade in on the photo. Letting go past the threshold commits the swipe. A short fall-off plays unless the player has asked the system to reduce motion.
+
+Arrow buttons on the photo still step through that person’s gallery. The photo dots show which frame is up.
+
+### 12.2 What a profile is allowed to claim
+
+A profile is still a performance. The chat can confirm it, bend it, or drop it.
+
+| Who | What the card shows |
+| --- | --- |
+| Peach, Lemon, Durian | The authored bio stays. It is claimed for that save so an ordinary card cannot reuse the same string. |
+| Ordinary residents | The long bio is the screenshot voice assigned to that person: boundary slogans, stacked titles, height and district, jokes, affair talk, insults, and self-mockery, often with English mixed in. |
+| Ordinary residents, most of the time | About 62% of ordinary cards, and any card whose long bio was already used in this save, switch to a one-line house rule. |
+
+The house-rule lines are the short slogans people actually put on apps: no WeChat, no meals, no drinks, no overnight, no coffee, no movies, no walks, no KTV, say it straight, don’t ask salary, serious swipes only, no online-only romance, weekends only, no smoking, no voice notes, plus a hobby or district filled in from that person.
+
+Three English slogans sit in that same list: `no ons`, `no 419`, `no fwb`, with a few emoji variants. `no 419` is the usual app shorthand for no one-night stand. The `no ons` wordings are drawn at a quarter of the weight of the other short lines, so they show up less often. `no 419` and `no fwb` keep a normal weight.
+
+Long bios are unique inside one save. The first person to wear a string keeps it. Short house rules are a shared phrasebook and may repeat. A short line is packaging. The assigned story still plays, and the chat is where that house rule is kept or broken.
+
+### 12.3 Chat shows speech, and a beat arrives in one sitting
+
+After a match, the thread shows spoken lines. A line enters the log when it is said by that resident (the name, or 桃子, or taotao, followed by a colon) or when it is one of the system notices in the table below. Scene prose, clock stamps such as “that evening” or “the next noon”, and the hidden life numbers stay out of the thread. Old saves follow the same filter when the log is drawn.
+
+| System line | When it appears |
+| --- | --- |
+| 你们匹配了。有人发了句 hi，之后就没下文。 | A quiet match. See 12.6. Each of the four quiet wordings is used once per save. |
+| 你们匹配了。谁也不敢迈出第一步。 | Quiet match. |
+| 你们匹配了。消息停在已读，没有人再接下一句。 | Quiet match. |
+| 你们匹配了。对话框亮了一下，又暗回去。 | Quiet match. |
+| 对方看过了，没有再回。 | An ordinary match reads a reply and stops. See 12.6. |
+| The missed-appointment lines already used for Peach | The appointment window closed. |
+
+The player still answers by choosing a written option. Replies are those options.
+
+A beat’s spoken lines are written into the history together, then typed out one bubble at a time while that chat is on screen. The pause between bubbles scales with the length of the line and caps at two seconds. Leaving the chat, hiding the window, or opening a dialog pauses the typing. Coming back continues the rest of that beat in the same sitting.
+
+The note under a waiting choice still tells the player the other person is living their own day. That wait sits between beats, not between lines of the same beat. See 12.7.
+
+### 12.4 The hidden life that picks the next beat
+
+Lemon, Durian, and every ordinary match run on a hidden life, the same selection idea as a life-restart sim. Peach does not. She stays on her authored nodes and real-world clock.
+
+At the start of the match the life rolls five stats from 0 to 10, plus a count of choices taken:
+
+| Stat | Seeded from | What a reply does |
+| --- | --- | --- |
+| Charm | A small spread from the person’s id | A warm reply on the lust arc raises it. |
+| Intelligence | Story personality, plus a stable jitter | A warm reply (the option whose id is `a` or ends in `a`) raises it. |
+| Strength | Story personality, plus a stable jitter | A cool reply (id `b` or ending in `b`) raises it. |
+| Money | Resource tier: tight, comfortable, or abundant | A cool reply on the bill arc raises it. |
+| Spirit | Story personality, plus a stable jitter | A warm reply raises it. A cool reply lowers it. |
+| Age | Starts at 0 | Every reply adds one. It counts choices, not years. |
+
+The player never sees these numbers. They only change which spoken beat can be drawn next.
+
+Each match has one talent. For an ordinary resident the talent is their story arc from section 4.1 (`puppy`, `life`, `body`, `pull`, `lust`, `fwb`, `ghost`, `third`, `cry`, `announce`), or the bound arc `factory` for Ryan and `bill` for Sherry. Lemon and Durian use the featured talent. Durian also carries her own opening, the band-leader lines, and then joins the featured beats.
+
+A beat enters the pool when its include rule passes and its exclude rule does not. Seen beats and the stat changes above are what open the next beat. The draw is weighted. The next chapter of the same talent is three times as likely. An offline chapter the player has moved past is four times as likely when it is still eligible. An ending choice is three times as likely when spirit is at 2 or below. Beats marked NoRandom stay out of the draw and arrive only through a branch.
+
+Two special beats sit beside the chapters:
+
+- **Echo.** Once the opening of that talent has been seen, one short follow-up can be drawn. The wording follows the stats: spirit at 3 or below asks whether the player still wants to talk; low money and high money each refuse to make the player take a position about money; high strength names the pace and says stop still works; low intelligence admits the last line was missed; otherwise they say they reread it and will leave it there. Each echo wording is used once per save.
+- **Cold stop.** If spirit is 1 or 0 after a reply, the next beat can be the cold stop: they say the heart for this has run out, and the thread ends. That stop happens once per save. The match stays in the list.
+
+When the pool has nothing left for that talent, the thread closes and the ending card, if the last choice carried one, is offered. The player returns to the message list and the other matches continue.
+
+Featured beats for Lemon and Durian are still the three-step rush: just matched, the days move forward, push it to a result. The result options remain friends, a faster closeness both of them accept, or stopping halfway. A third option on those beats changes no stat except the choice count.
+
+### 12.5 A spoken beat plays once per save
+
+Every beat id is remembered on the save. A second resident cannot play a beat this save has already heard. An ordinary match is seeded onto an arc whose opening is still unheard. When every opening has been heard, that match has no story dialogue and takes a quiet line if one remains. With none left, the like closes with no thread.
+
+Echo keys and the cold stop share that same memory. Deleting the save clears it. An old save rebuilds the memory from beats already seen, so a line that already played is not treated as new.
+
+### 12.6 Quiet matches, and replies that never come
+
+Two silences are written as story, and both leave the match in the message list. Section 7 still holds for the majors: Peach, Lemon, and Durian do not take the unanswered-reply roll, and they do not drop the thread on their own. The player can still unmatch anyone.
+
+**Quiet match.** About half of new ordinary matches skip the story and take one unused quiet line from 12.3, then stop. The player can read it and leave it. When all four quiet lines have already been used, that coin flip falls through and the match tries a real arc. When the openings are used up as well, the like closes with no thread.
+
+**Unanswered reply.** After the player chooses a reply on an ordinary match, there is a 45% chance the other person reads it and does not answer. The thread shows 对方看过了，没有再回。 and ends. This roll is separate from Leo’s authored ghost arc and from Ryan’s three-date factory ending. Those still play their own scenes when that arc is the one drawn. The 45% roll can also end a thread before that authored ghosting scene is reached. A refusal, a stop, or leaving the choice untouched still does not force the date to play out.
+
+Failed likes stay silent. The message list shows 等待回应 while a like is still pending, and it never announces a like that will not match.
+
+### 12.7 How long a match waits
+
+These timings replace the prototype numbers in section 8 for ordinary matches. They are still prototype numbers.
+
+| Event | Current rule |
+| --- | --- |
+| Ordinary like | Half of ordinary residents want to match. The other half never do, with no notice. |
+| Ordinary match delay | If they will match: a 35% chance of 2 to 9 hours, otherwise 1, 2, or 3 local days. |
+| Major match delay | Peach, Lemon, and Durian still want to match. The current profiles wait 10 seconds. |
+| Like-you queue | Still one attempt every 90 seconds, cap 6. Time away from the game adds at most the one attempt that is due. The first three attempts still prefer Peach, then Lemon, then Durian, skipping anyone already matched or archived. |
+| Between beats | The next beat waits until the player does something else, or until 3 minutes pass. Something else means opening another chat, swiping a card, changing tab, or coming back to the window. A new local day also releases a held beat. |
+| Peach | Her days and weeks stay on the real local clock. The 3-minute beat wait belongs to other matches. The debug control in 12.8 can pull her clock forward for a playtest. VIP still cannot sell the wait. An appointment still has its own window. |
+
+The daily deck is still at most 20 cards, rebuilt on the player’s local date. Up to three majors who are not already waiting on a like are shuffled in with the ordinary cards. On the ordinary slots, about half the draws look at a few candidates and keep the one that shares a tag with the last five interests the player liked. The other draws stay random. The deck can be shorter when the pool runs out. A card the player only skipped can appear on a later day. A matched or archived ordinary resident is not dealt again.
+
+Section 6 still wants a matched, waiting, or archived major to stay out of that shuffle. The current build only holds back a major who is already in the pending list. Liking a major you already match tells you the chat exists and keeps the original thread. That reappearance is a prototype gap against section 6.
+
+### 12.8 The debug clock
+
+A small `debug` control sits beside the 果然 wordmark. It opens a dialog with two actions: move the clock forward one day, or three days.
+
+Forwarding pulls every still-waiting timer toward now by that many days: pending matches, Peach’s next contact, an open appointment, the like-you timer, and a beat that is on the 3-minute hold. A timer that is already due stays due. The discovery deck is dealt again as a new day, and a held beat can release because the day changed.
+
+The control is a prototype tool so the real-time waits can be walked during the jam. It is labeled debug. It sits outside the VIP product in section 7: the like-you grid stays blurred, and a pass stays a pass.
+
+### 12.9 Still open after this pass
+
+1. Pick a canonical portrait for each major, then build a consistent gallery. The A/B/C sets are still candidates.
+2. The generator in section 9 is still not the runtime. The build keeps using the authored pool and the current pictures.
+3. Lemon and Durian still have no full handwritten mainline. Their featured beats are the rush in 12.4.
+4. Real payment, accounts, cloud saves, and a player-authored profile are still out.
+5. Keep matched, waiting, and archived majors out of the next day’s deck, as section 6 already asks.
+6. Humor limits, how many chats should stay live at once, and the per-line definitions of HE and BE are still open. The hidden stats are a drawing tool. They are not a score that awards an ending by themselves.
 
